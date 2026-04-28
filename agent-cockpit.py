@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agent Cockpit (TUI)
+"""CodexDeck (TUI)
 
 Pilotage terminal simple d'un process Codex basé sur AI_TODO.md.
 MVP:
