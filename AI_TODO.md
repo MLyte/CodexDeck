@@ -126,7 +126,7 @@
 - [x] K01 [P0][MVP] Maintenir une queue thread-safe + limite de taille (éviter fuite mémoire).
 - [ ] K02 [P0][MVP] Troncature visuelle propre côté TUI selon largeur.
 - [x] K03 [P0][MVP] Enregistrer les logs avec horodatage dans `logs/agent.log` en mode append.
-- [ ] K04 [P1][MVP] Sanitiser les logs avant écriture fichier (masquer `token`, `api_key`, `password`, `secret`).
+- [x] K04 [P1][MVP] Sanitiser les logs avant écriture fichier (masquer `token`, `api_key`, `password`, `secret`).
 
 ### L) Logs persistants [P1][V2]
 - [ ] L01 [P1][V2] Ajouter rotation simple (taille max + nombre de backups).
@@ -144,8 +144,8 @@
 - [ ] N01 [P0][MVP] Corriger les largeurs avec bordures stables (pas de caractères parasites).
 - [ ] N02 [P0][MVP] Afficher titres, séparateur, et status bar au format stable.
 - [ ] N03 [P1][MVP] Ajouter compteur de lignes visibles + mode défilement.
-- [ ] N04 [P0][MVP] Ajouter mode rendu ASCII fallback (`+---+`) si le terminal ne supporte pas correctement les bordures Unicode.
-- [ ] N05 [P1][MVP] Tester rendu 80x24, 100x30, 120x40 et fenêtre redimensionnée, sans chevauchement ni ligne plus longue que la largeur.
+- [x] N04 [P0][MVP] Ajouter mode rendu ASCII fallback (`+---+`) si le terminal ne supporte pas correctement les bordures Unicode.
+- [x] N05 [P1][MVP] Tester rendu 80x24, 100x30, 120x40 et fenêtre redimensionnée, sans chevauchement ni ligne plus longue que la largeur.
 - [ ] N06 [P1][MVP] Tronquer avec ellipsis stable en largeur terminale réelle, y compris caractères larges/accents.
 
 ### O) Contrôles clavier [P0][MVP]
@@ -174,7 +174,7 @@
 - [x] R05 [P0][MVP] Tests unitaires state machine — AC: transitions légales acceptées, transitions illégales refusées avec erreur contrôlée.
 - [x] R06 [P0][MVP] Tests unitaires runner avec `FakePopen` — AC: start success, `Popen` exception, exit code 0, exit code non-zero, stop terminate, fallback kill.
 - [x] R07 [P0][MVP] Tests logs et queue — AC: stdout fake horodaté, envoyé à la queue, écrit en append, limite de queue respectée.
-- [ ] R08 [P1][MVP] Tests rendu TUI pur — AC: rendu ne crashe pas à 60/80/120 colonnes, status bar contient state/model/errors.
+- [x] R08 [P1][MVP] Tests rendu TUI pur — AC: rendu ne crashe pas à 60/80/120 colonnes, status bar contient state/model/errors.
 - [ ] R09 [P1][MVP] Tests boucle non bloquante avec fake key reader — AC: séquence `r`, `s`, `q` termine sans attendre une vraie entrée clavier.
 - [ ] R10 [P1][MVP] Test de restauration terminal après exception simulée pendant la boucle UI — AC: cleanup appelé en `finally`.
 - [ ] R11 [P1][V2] Tests multi-OS ciblés (`msvcrt`/`tty`) — AC: tests conditionnels par plateforme documentés et stables en CI.

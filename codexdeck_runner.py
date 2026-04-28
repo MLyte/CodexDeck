@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Callable, Deque, Iterable, Optional, Protocol, Sequence, TextIO
 
 
+SENSITIVE_KEYS = ("token", "api_key", "apikey", "password", "secret")
+
+
 class RunnerState(str, Enum):
     IDLE = "IDLE"
     STARTING = "STARTING"
@@ -83,6 +86,31 @@ class BoundedLogBuffer:
     def __len__(self) -> int:
         with self._lock:
             return len(self._lines)
+
+
+def sanitize_log_message(message: str) -> str:
+    words = message.split()
+    sanitized: list[str] = []
+    mask_next = False
+    for word in words:
+        lowered = word.lower()
+        if mask_next:
+            sanitized.append("***")
+            mask_next = False
+            continue
+        if any(key in lowered for key in SENSITIVE_KEYS):
+            if "=" in word:
+                key, sep, _value = word.partition("=")
+                sanitized.append(f"{key}{sep}***")
+            elif ":" in word:
+                key, sep, _value = word.partition(":")
+                sanitized.append(f"{key}{sep}***")
+            else:
+                sanitized.append(word)
+                mask_next = True
+            continue
+        sanitized.append(word)
+    return " ".join(sanitized)
 
 
 def build_command(command: str | Sequence[str], todo_path: str | os.PathLike[str]) -> list[str]:
@@ -302,7 +330,7 @@ class CodexProcessRunner:
             return
 
     def _emit(self, message: str) -> None:
-        stamped = f"{self._timestamp().isoformat(timespec='seconds')} {message}"
+        stamped = f"{self._timestamp().isoformat(timespec='seconds')} {sanitize_log_message(message)}"
         self.log_buffer.append(stamped)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         with self.log_path.open("a", encoding="utf-8") as log_file:

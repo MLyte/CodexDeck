@@ -68,6 +68,7 @@ CodexDeck lit principalement sa configuration depuis l’environnement.
 - `MAX_LOG_LINES`: limite cible de lignes gardées en mémoire
 - `CODEX_TODO_PATH` / `TODO_PATH`: chemin du backlog, par défaut `AI_TODO.md`
 - `CODEX_LOG_PATH` / `LOG_PATH`: chemin du log persistant, par défaut `logs/agent.log`
+- `CODEX_ASCII_BORDERS=1`: force les bordures ASCII (`+---+`) pour les terminaux qui affichent mal l’Unicode
 
 Exemple avec un stub local:
 

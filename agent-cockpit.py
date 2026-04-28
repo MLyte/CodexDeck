@@ -22,6 +22,7 @@ from typing import Optional
 
 from codexdeck_core import CockpitConfig, ConfigError, TodoTask, parse_todo_file
 from codexdeck_runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessNotRunning, RunnerState
+from codexdeck_ui import RenderStatus, render_frame, truncate
 
 
 class KeyReader:
@@ -116,56 +117,23 @@ class Cockpit:
 
     @staticmethod
     def _truncate(text: str, width: int) -> str:
-        if width <= 0:
-            return ""
-        if len(text) <= width:
-            return text
-        if width <= 3:
-            return text[: max(width, 0)]
-        return text[: width - 3] + "..."
+        return truncate(text, width)
 
     def _render(self, width: int, height: int) -> str:
-        left_width = max(24, width // 3)
-        right_width = max(20, width - left_width - 3)
-        body_h = max(4, height - 4)
-        lines = []
-
-        # Top borders and titles
-        top_left = "┌" + "─" * left_width + "┬" + "─" * right_width + "┐"
-        title_left = f"{'AI_TODO.md':^{left_width}}"
-        title_right = f"{'Codex Output':^{right_width}}"
-        title_line = "│" + title_left + "│" + title_right + "│"
-        lines.append(top_left)
-        lines.append(title_line)
-
-        task_texts = []
-        for t in self.tasks:
-            prefix = "[x] " if t.done else "[ ] "
-            task_texts.append(self._truncate(prefix + t.text, left_width - 2))
-
-        right_lines = []
-        for line in self.runner.logs()[-body_h:]:
-            right_lines.append(self._truncate(line, right_width - 2))
-        while len(right_lines) < body_h:
-            right_lines.insert(0, "")
-        while len(task_texts) < body_h:
-            task_texts.append("")
-
-        for i in range(body_h):
-            left = task_texts[i].ljust(left_width) if task_texts else "".ljust(left_width)
-            right = right_lines[i].ljust(right_width) if right_lines else "".ljust(right_width)
-            lines.append("│" + left + "│" + right + "│")
-
-        divider = "├" + "─" * left_width + "┴" + "─" * right_width + "┤"
-        lines.append(divider)
         runner_status = self.runner.status()
-        status = (
-            f"Status: {runner_status.state.value:<8} | Model: {self.model:<7} | "
-            f"Last run: {self.last_run:<5} | Errors: {runner_status.errors:<3}"
+        return render_frame(
+            tasks=self.tasks,
+            logs=self.runner.logs(),
+            status=RenderStatus(
+                state=runner_status.state.value,
+                model=self.model,
+                last_run=self.last_run,
+                errors=runner_status.errors,
+            ),
+            width=width,
+            height=height,
+            ascii_borders=os.getenv("CODEX_ASCII_BORDERS") == "1",
         )
-        lines.append("│" + self._truncate(status, width - 2).ljust(width - 2) + "│")
-        lines.append("└" + "─" * (width - 2) + "┘")
-        return "\n".join(lines)
 
     def stop(self) -> None:
         try:

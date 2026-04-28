@@ -4,7 +4,7 @@ import io
 from datetime import datetime
 from pathlib import Path
 
-from codexdeck_runner import CodexProcessRunner
+from codexdeck_runner import CodexProcessRunner, sanitize_log_message
 
 
 class FakeProcess:
@@ -70,3 +70,30 @@ def test_log_file_is_append_only_across_runs(tmp_path: Path) -> None:
     content = log_path.read_text(encoding="utf-8")
     assert "first" in content
     assert "second" in content
+
+
+def test_log_sanitization_masks_sensitive_values(tmp_path: Path) -> None:
+    log_path = tmp_path / "logs" / "agent.log"
+    process = FakeProcess()
+    process.stdout = io.StringIO("token=abc123 password:super-secret api_key sk-test\n")
+    runner = CodexProcessRunner(
+        ["codex"],
+        log_path,
+        popen_factory=lambda *a, **k: process,
+        timestamp=lambda: datetime(2026, 4, 29, 12, 30, 0),
+    )
+
+    runner.start(tmp_path / "AI_TODO.md")
+    runner.wait()
+
+    content = log_path.read_text(encoding="utf-8")
+    assert "abc123" not in content
+    assert "super-secret" not in content
+    assert "sk-test" not in content
+    assert "token=***" in content
+    assert "password:***" in content
+    assert "api_key ***" in content
+
+
+def test_sanitize_log_message_leaves_unrelated_text_alone() -> None:
+    assert sanitize_log_message("normal output line") == "normal output line"
