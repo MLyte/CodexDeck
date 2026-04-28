@@ -14,29 +14,14 @@ Non bloquant: UI refresh + lecture clavier async + logs en thread séparé.
 from __future__ import annotations
 
 import os
-import re
-import shlex
 import shutil
-import subprocess
 import sys
-import threading
 import time
-from collections import deque
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from queue import Queue, Empty
-from typing import List, Optional
+from typing import Optional
 
-
-STATE = {"IDLE", "RUNNING", "ERROR"}
-TODO_RE = re.compile(r"^\s*[-*]?\s*\[(?P<state>[xX\s])\]\s*(?P<text>.+?)\s*$")
-
-
-@dataclass
-class Task:
-    text: str
-    done: bool
+from codexdeck_core import CockpitConfig, ConfigError, TodoTask, parse_todo_file
+from codexdeck_runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessNotRunning, RunnerState
 
 
 class KeyReader:
@@ -87,42 +72,22 @@ class KeyReader:
 class Cockpit:
     def __init__(
         self,
-        todo_path: Path,
-        log_path: Path,
-        refresh_hz: float = 8.0,
+        config: CockpitConfig,
     ) -> None:
-        self.todo_path = todo_path
-        self.log_path = log_path
-        self.refresh_delay = 1.0 / max(1.0, refresh_hz)
-        self.tasks: List[Task] = []
+        self.config = config
+        self.todo_path = config.todo_path
+        self.refresh_delay = 1.0 / max(1.0, config.refresh_hz)
+        self.tasks: list[TodoTask] = []
         self._todo_mtime = None
-        self.state = "IDLE"
-        self.errors = 0
         self.last_run = "never"
-        self.model = os.getenv("CODEX_MODEL", "normal")
-        self.log_queue: "Queue[str]" = Queue()
-        self.lines = deque(maxlen=5000)
-        self.proc: Optional[subprocess.Popen[str]] = None
-        self.reader: Optional[threading.Thread] = None
-        self._running = False
-        self._stop_requested = threading.Event()
-
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        self._log_file = self.log_path.open("a", encoding="utf-8")
-
-    def parse_todo(self) -> List[Task]:
-        if not self.todo_path.exists():
-            return []
-        raw = self.todo_path.read_text(encoding="utf-8", errors="ignore")
-        tasks: List[Task] = []
-        for line in raw.splitlines():
-            match = TODO_RE.match(line)
-            if not match:
-                continue
-            state = match.group("state")
-            text = match.group("text").strip()
-            tasks.append(Task(text=text, done=state.lower() == "x"))
-        return tasks
+        self.model = config.model
+        self.runner = CodexProcessRunner(
+            config.codex_cmd,
+            config.log_path,
+            max_log_lines=config.max_log_lines,
+            stop_timeout=config.stop_timeout,
+            run_timeout=config.run_timeout,
+        )
 
     def load_todo_if_changed(self) -> None:
         try:
@@ -133,93 +98,21 @@ class Cockpit:
         if self._todo_mtime == stat.st_mtime:
             return
         self._todo_mtime = stat.st_mtime
-        self.tasks = self.parse_todo()
-
-    def build_command(self) -> List[str]:
-        raw = os.getenv("CODEX_CMD", "codex").strip()
-        todo_abs = str(self.todo_path.resolve())
-        raw = raw.replace("{todo}", todo_abs).replace("$TODO", todo_abs).replace("%TODO%", todo_abs)
-        args = shlex.split(raw, posix=os.name != "nt")
-        if not args:
-            return ["codex"]
-        return args
-
-    def _reader_thread(self, pipe, process: subprocess.Popen[str]) -> None:
         try:
-            for line in iter(pipe.readline, ""):
-                if self._stop_requested.is_set():
-                    break
-                text = line.rstrip("\n\r")
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                payload = f"[{timestamp}] {text}"
-                self.log_queue.put(payload)
-                self._log_file.write(payload + "\n")
-                self._log_file.flush()
-        finally:
-            try:
-                pipe.close()
-            except OSError:
-                pass
+            self.tasks = parse_todo_file(self.todo_path)
+        except ConfigError as exc:
+            self.tasks = []
+            self.runner.log_buffer.append(f"[ERROR] {exc.message}")
 
     def _start_codex(self) -> None:
-        if self.proc is not None and self.proc.poll() is None:
-            return
-        cmd = self.build_command()
-        self.lines.clear()
-        self._stop_requested.clear()
-        self.state = "RUNNING"
-        self.last_run = datetime.now().strftime("%H:%M:%S")
-        self.log_queue.put(f"> Running Codex: {' '.join(cmd)}")
-
         try:
-            self.proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
-            )
+            status = self.runner.start(self.todo_path)
+            self.last_run = time.strftime("%H:%M:%S")
+            self.runner.log_buffer.append(f"> Running Codex run_id={status.run_id}")
+        except ProcessAlreadyRunning:
+            return
         except Exception as exc:
-            self.state = "ERROR"
-            self.errors += 1
-            self.lines.append(f"[ERROR] {exc}")
-            self.log_queue.put(f"[ERROR] cannot start Codex: {exc}")
-            return
-
-        self.reader = threading.Thread(
-            target=self._reader_thread,
-            args=(self.proc.stdout, self.proc),
-            daemon=True,
-        )
-        self.reader.start()
-        self._running = True
-
-    def _drain_logs(self) -> None:
-        while True:
-            try:
-                line = self.log_queue.get_nowait()
-            except Empty:
-                break
-            self.lines.append(line)
-
-    def _flush_queue_to_lines(self) -> None:
-        self._drain_logs()
-
-    def _check_process(self) -> None:
-        if not self._running or self.proc is None:
-            return
-        code = self.proc.poll()
-        if code is None:
-            return
-        self._flush_queue_to_lines()
-        if code == 0:
-            self.state = "IDLE"
-        else:
-            self.state = "ERROR"
-            self.errors += 1
-        self._running = False
-        self._stop_requested.set()
+            self.runner.log_buffer.append(f"[ERROR] cannot start Codex: {exc}")
 
     @staticmethod
     def _truncate(text: str, width: int) -> str:
@@ -237,8 +130,6 @@ class Cockpit:
         body_h = max(4, height - 4)
         lines = []
 
-        self._drain_logs()
-
         # Top borders and titles
         top_left = "┌" + "─" * left_width + "┬" + "─" * right_width + "┐"
         title_left = f"{'AI_TODO.md':^{left_width}}"
@@ -253,7 +144,7 @@ class Cockpit:
             task_texts.append(self._truncate(prefix + t.text, left_width - 2))
 
         right_lines = []
-        for line in list(self.lines)[-body_h:]:
+        for line in self.runner.logs()[-body_h:]:
             right_lines.append(self._truncate(line, right_width - 2))
         while len(right_lines) < body_h:
             right_lines.insert(0, "")
@@ -267,57 +158,52 @@ class Cockpit:
 
         divider = "├" + "─" * left_width + "┴" + "─" * right_width + "┤"
         lines.append(divider)
-        status = f"Status: {self.state:<6} | Model: {self.model:<7} | Last run: {self.last_run:<5} | Errors: {self.errors:<3}"
+        runner_status = self.runner.status()
+        status = (
+            f"Status: {runner_status.state.value:<8} | Model: {self.model:<7} | "
+            f"Last run: {self.last_run:<5} | Errors: {runner_status.errors:<3}"
+        )
         lines.append("│" + self._truncate(status, width - 2).ljust(width - 2) + "│")
         lines.append("└" + "─" * (width - 2) + "┘")
         return "\n".join(lines)
 
     def stop(self) -> None:
-        if self.proc is None or self.proc.poll() is not None:
-            return
-        self._stop_requested.set()
-        self.proc.terminate()
         try:
-            self.proc.wait(timeout=1.0)
-        except subprocess.TimeoutExpired:
-            self.proc.kill()
-            self.proc.wait(timeout=1.0)
+            self.runner.stop()
+        except ProcessNotRunning:
+            return
 
     def loop(self) -> None:
         key_reader = KeyReader()
         self.load_todo_if_changed()
-        self.lines.append("> Ready. Press 'r' to run Codex, 's' to stop, 'q' to quit.")
+        self.runner.log_buffer.append("> Ready. Press 'r' to run Codex, 's' to stop, 'q' to quit.")
 
         try:
             while True:
                 self.load_todo_if_changed()
-                self._check_process()
-                self._flush_queue_to_lines()
+                runner_status = self.runner.status()
                 key = key_reader.get_key()
                 if key:
                     k = key.lower()
                     if k == "q":
                         break
-                    if k == "r" and self.state != "RUNNING":
+                    if k == "r" and runner_status.state not in {RunnerState.RUNNING, RunnerState.STARTING}:
                         self._start_codex()
-                    if k == "s" and self.state == "RUNNING":
+                    if k == "s" and runner_status.state == RunnerState.RUNNING:
                         self.stop()
-                        self.state = "IDLE"
                 width, height = shutil.get_terminal_size(fallback=(100, 24))
                 content = self._render(width, height)
-                os.system("cls" if os.name == "nt" else "clear")
+                print("\033[2J\033[H", end="")
                 print(content, end="", flush=True)
                 time.sleep(self.refresh_delay)
         finally:
             self.stop()
             key_reader.close()
-            self._log_file.close()
 
 
 def main() -> None:
-    todo_path = Path("AI_TODO.md")
-    log_path = Path("logs") / "agent.log"
-    cockpit = Cockpit(todo_path=todo_path, log_path=log_path)
+    config = CockpitConfig.from_env(base_dir=Path.cwd())
+    cockpit = Cockpit(config=config)
     cockpit.loop()
 
 

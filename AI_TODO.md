@@ -66,66 +66,66 @@
 - Smoke manuel Windows: `$env:CODEX_CMD="python tests/stubs/codex_stub.py --mode success {todo}"; python codexdeck.py`
 
 ### A) Architecture de base [P0][MVP]
-- [ ] A01 [P0][MVP] Définir un contrat d’exigences minimal (lancement, stop, état, parsing TODO, logs).
-- [ ] A02 [P0][MVP] Figer le format d’entrée `AI_TODO.md` et la sémantique des cases `[ ]` / `[x]`.
+- [x] A01 [P0][MVP] Définir un contrat d’exigences minimal (lancement, stop, état, parsing TODO, logs).
+- [x] A02 [P0][MVP] Figer le format d’entrée `AI_TODO.md` et la sémantique des cases `[ ]` / `[x]`.
 
 ### B) Configuration [P0][MVP]
-- [ ] B01 [P0][MVP] Externaliser les options clés via `CODEX_CMD`, `CODEX_MODEL`, `RUN_TIMEOUT_SECONDS`, `STATE_REFRESH_HZ`, `MAX_LOG_LINES`.
+- [x] B01 [P0][MVP] Externaliser les options clés via `CODEX_CMD`, `CODEX_MODEL`, `RUN_TIMEOUT_SECONDS`, `STATE_REFRESH_HZ`, `MAX_LOG_LINES`.
 - [ ] B02 [P2][V2] Ajouter un fichier `codexdeck.conf` optionnel, priorités: CLI > env > défaut.
-- [ ] B03 [P1][MVP] Ajouter une commande `--print-config` masquant les valeurs sensibles et affichant les chemins résolus.
-- [ ] B04 [P0][MVP] Centraliser la config dans une dataclass `CockpitConfig` validée au démarrage (`todo_path`, `log_path`, `codex_cmd`, `model`, `run_timeout`, `stop_timeout`, `refresh_hz`, `max_log_lines`).
+- [x] B03 [P1][MVP] Ajouter une commande `--print-config` masquant les valeurs sensibles et affichant les chemins résolus.
+- [x] B04 [P0][MVP] Centraliser la config dans une dataclass `CockpitConfig` validée au démarrage (`todo_path`, `log_path`, `codex_cmd`, `model`, `run_timeout`, `stop_timeout`, `refresh_hz`, `max_log_lines`).
 - [ ] B05 [P0][MVP] Refuser une config invalide avec message utilisateur clair avant de démarrer la TUI.
 
 ### C) Parsing des tâches [P0][MVP]
-- [ ] C01 [P0][MVP] Rendre le parser compatible avec `- [ ]`, `* [x]`, indents et sections.
-- [ ] C02 [P0][MVP] Ignorer proprement les lignes invalides et logger un warning sans crash.
-- [ ] C03 [P1][MVP] Ajouter des métadonnées de tâche (`id`, `line`, `raw`) stables.
-- [ ] C04 [P0][MVP] Définir un modèle `TodoTask(id, text, done, line, section, raw)` et interdire à la UI de parser directement le markdown.
-- [ ] C05 [P1][MVP] Utiliser un hash stable (`line + raw` au MVP) pour détecter les changements sans dupliquer les tâches.
+- [x] C01 [P0][MVP] Rendre le parser compatible avec `- [ ]`, `* [x]`, indents et sections.
+- [x] C02 [P0][MVP] Ignorer proprement les lignes invalides et logger un warning sans crash.
+- [x] C03 [P1][MVP] Ajouter des métadonnées de tâche (`id`, `line`, `raw`) stables.
+- [x] C04 [P0][MVP] Définir un modèle `TodoTask(id, text, done, line, section, raw)` et interdire à la UI de parser directement le markdown.
+- [x] C05 [P1][MVP] Utiliser un hash stable (`line + raw` au MVP) pour détecter les changements sans dupliquer les tâches.
 
 ### D) Machine d’état [P0][MVP]
-- [ ] D01 [P0][MVP] Formaliser l’`Enum` d’état: `IDLE`, `STARTING`, `RUNNING`, `STOPPING`, `ERROR`.
-- [ ] D02 [P0][MVP] Empêcher les transitions illégales (ex: `RUNNING` -> `RUNNING`).
-- [ ] D03 [P0][MVP] Représenter le timeout comme cause d’erreur (`error_code=RUN_TIMEOUT`) plutôt que comme état long-lived.
-- [ ] D04 [P0][MVP] Implémenter une table de transitions autorisées et des tests unitaires couvrant transitions valides/invalides.
-- [ ] D05 [P0][MVP] Normaliser les erreurs d’état (`INVALID_TRANSITION`, `PROCESS_ALREADY_RUNNING`, `PROCESS_NOT_RUNNING`).
+- [x] D01 [P0][MVP] Formaliser l’`Enum` d’état: `IDLE`, `STARTING`, `RUNNING`, `STOPPING`, `ERROR`.
+- [x] D02 [P0][MVP] Empêcher les transitions illégales (ex: `RUNNING` -> `RUNNING`).
+- [x] D03 [P0][MVP] Représenter le timeout comme cause d’erreur (`error_code=RUN_TIMEOUT`) plutôt que comme état long-lived.
+- [x] D04 [P0][MVP] Implémenter une table de transitions autorisées et des tests unitaires couvrant transitions valides/invalides.
+- [x] D05 [P0][MVP] Normaliser les erreurs d’état (`INVALID_TRANSITION`, `PROCESS_ALREADY_RUNNING`, `PROCESS_NOT_RUNNING`).
 
 ### E) Contexte d’exécution [P0][MVP]
-- [ ] E01 [P0][MVP] Ajouter un contexte run (`run_id`, `pid`, `start_ts`, `last_error`) exposable à la UI.
+- [x] E01 [P0][MVP] Ajouter un contexte run (`run_id`, `pid`, `start_ts`, `last_error`) exposable à la UI.
 - [ ] E02 [P1][MVP] Calculer `uptime` et durée du run courant dans la status bar.
 
 ### F) Runner de process [P0][MVP]
-- [ ] F01 [P0][MVP] Encapsuler le cycle process dans une classe `CodexProcessRunner` (`start/stop/status/wait`).
-- [ ] F02 [P0][MVP] Interdire les lancements concurrents (`1 process max`) de bout en bout.
-- [ ] F03 [P1][MVP] Garantir retour propre des erreurs `Popen` vers état `ERROR` avec compteur.
-- [ ] F04 [P0][MVP] Définir une interface fakeable `ProcessHandle` minimale (`pid`, `stdout`, `poll`, `terminate`, `kill`, `wait`) pour tester sans lancer Codex.
-- [ ] F05 [P0][MVP] Injecter la factory de process dans `CodexProcessRunner` au lieu d’appeler `subprocess.Popen` directement dans la logique métier.
+- [x] F01 [P0][MVP] Encapsuler le cycle process dans une classe `CodexProcessRunner` (`start/stop/status/wait`).
+- [x] F02 [P0][MVP] Interdire les lancements concurrents (`1 process max`) de bout en bout.
+- [x] F03 [P1][MVP] Garantir retour propre des erreurs `Popen` vers état `ERROR` avec compteur.
+- [x] F04 [P0][MVP] Définir une interface fakeable `ProcessHandle` minimale (`pid`, `stdout`, `poll`, `terminate`, `kill`, `wait`) pour tester sans lancer Codex.
+- [x] F05 [P0][MVP] Injecter la factory de process dans `CodexProcessRunner` au lieu d’appeler `subprocess.Popen` directement dans la logique métier.
 
 ### G) Construction de la commande [P0][MVP]
-- [ ] G01 [P0][MVP] Séparer interpolation (`{todo}` / `$TODO` / `%TODO%`) et parsing d’arguments.
-- [ ] G02 [P0][MVP] Supporter arguments avec espaces et caractères spéciaux.
-- [ ] G03 [P1][MVP] Autoriser un mode stub de test (simuler Codex via script local).
-- [ ] G04 [P0][MVP] Exécuter les commandes avec `shell=False` par défaut et documenter explicitement que `CODEX_CMD` est parsé en arguments.
-- [ ] G05 [P0][MVP] Rejeter une commande vide, un placeholder TODO absent si requis, ou un chemin TODO inexistant avant `Popen`.
+- [x] G01 [P0][MVP] Séparer interpolation (`{todo}` / `$TODO` / `%TODO%`) et parsing d’arguments.
+- [x] G02 [P0][MVP] Supporter arguments avec espaces et caractères spéciaux.
+- [x] G03 [P1][MVP] Autoriser un mode stub de test (simuler Codex via script local).
+- [x] G04 [P0][MVP] Exécuter les commandes avec `shell=False` par défaut et documenter explicitement que `CODEX_CMD` est parsé en arguments.
+- [x] G05 [P0][MVP] Rejeter une commande vide, un placeholder TODO absent si requis, ou un chemin TODO inexistant avant `Popen`.
 
 ### H) Gestion d’erreurs process [P0][MVP]
-- [ ] H01 [P0][MVP] Afficher un message d’erreur court + root-cause dans le panneau logs.
-- [ ] H02 [P0][MVP] Incrémenter `errors` et revenir proprement à `IDLE`/`ERROR`.
+- [x] H01 [P0][MVP] Afficher un message d’erreur court + root-cause dans le panneau logs.
+- [x] H02 [P0][MVP] Incrémenter `errors` et revenir proprement à `IDLE`/`ERROR`.
 - [ ] H03 [P1][V2] Classifier erreurs réessayables vs non réessayables.
 
 ### I) Arrêt propre [P0][MVP]
-- [ ] I01 [P0][MVP] Implémenter `terminate` puis `kill` après timeout configurable.
-- [ ] I02 [P0][MVP] Garantir la fermeture du lecteur de logs et la libération des ressources.
+- [x] I01 [P0][MVP] Implémenter `terminate` puis `kill` après timeout configurable.
+- [x] I02 [P0][MVP] Garantir la fermeture du lecteur de logs et la libération des ressources.
 - [ ] I03 [P1][V2] Ajouter stop via signal `SIGINT`/`Ctrl+C` avec restore TUI.
 
 ### J) Timeout d’exécution [P0][MVP]
-- [ ] J01 [P0][MVP] Timeout global run configurable; si dépassé: stop contrôlé, log `RUN_TIMEOUT`, état final `ERROR`.
-- [ ] J02 [P0][MVP] Tests de timeout via fake process qui bloque volontairement.
+- [x] J01 [P0][MVP] Timeout global run configurable; si dépassé: stop contrôlé, log `RUN_TIMEOUT`, état final `ERROR`.
+- [x] J02 [P0][MVP] Tests de timeout via fake process qui bloque volontairement.
 
 ### K) Logs live et file [P0][MVP]
-- [ ] K01 [P0][MVP] Maintenir une queue thread-safe + limite de taille (éviter fuite mémoire).
+- [x] K01 [P0][MVP] Maintenir une queue thread-safe + limite de taille (éviter fuite mémoire).
 - [ ] K02 [P0][MVP] Troncature visuelle propre côté TUI selon largeur.
-- [ ] K03 [P0][MVP] Enregistrer les logs avec horodatage dans `logs/agent.log` en mode append.
+- [x] K03 [P0][MVP] Enregistrer les logs avec horodatage dans `logs/agent.log` en mode append.
 - [ ] K04 [P1][MVP] Sanitiser les logs avant écriture fichier (masquer `token`, `api_key`, `password`, `secret`).
 
 ### L) Logs persistants [P1][V2]
@@ -135,9 +135,9 @@
 
 ### M) UI non bloquante [P0][MVP]
 - [ ] M01 [P0][MVP] Vérifier le render loop sans blocage clavier (polling non bloquant).
-- [ ] M02 [P0][MVP] Ajouter rafraîchissement à taux constant configurable (8-20 Hz).
+- [x] M02 [P0][MVP] Ajouter rafraîchissement à taux constant configurable (8-20 Hz).
 - [ ] M03 [P1][MVP] Ajouter fallback si taille terminal trop petite.
-- [ ] M04 [P0][MVP] Garantir restauration terminal en `finally` après `q`, exception, `Ctrl+C` ou crash process.
+- [x] M04 [P0][MVP] Garantir restauration terminal en `finally` après `q`, exception, `Ctrl+C` ou crash process.
 - [ ] M05 [P1][MVP] Dégrader proprement le rendu sous taille minimale (`<80x20`): message compact + status + commandes essentielles.
 
 ### N) Rendu panneaux [P0][MVP]
@@ -149,15 +149,15 @@
 - [ ] N06 [P1][MVP] Tronquer avec ellipsis stable en largeur terminale réelle, y compris caractères larges/accents.
 
 ### O) Contrôles clavier [P0][MVP]
-- [ ] O01 [P0][MVP] `r` = run, `s` = stop, `q` = quit (comportement stable).
+- [x] O01 [P0][MVP] `r` = run, `s` = stop, `q` = quit (comportement stable).
 - [ ] O02 [P1][MVP] Aide clavier (`?` / `h`) affichant les raccourcis.
 - [ ] O03 [P1][V2] Ajout mode pause de scroll / freeze fenêtre.
-- [ ] O04 [P0][MVP] Implémenter un lecteur clavier cross-platform isolé (`msvcrt` Windows, `termios/select` Unix) avec tests conditionnels.
+- [x] O04 [P0][MVP] Implémenter un lecteur clavier cross-platform isolé (`msvcrt` Windows, `termios/select` Unix) avec tests conditionnels.
 - [ ] O05 [P1][MVP] Ajouter confirmations uniquement pour actions destructrices ou ambiguës, sans bloquer le render loop.
 - [ ] O06 [P1][MVP] Gérer touches inconnues sans bruit excessif: pas de crash, message bref optionnel.
 
 ### P) Rafraîchissement TODO [P0][MVP]
-- [ ] P01 [P0][MVP] Rechargement automatique à la modification du fichier (mtime + debounce).
+- [x] P01 [P0][MVP] Rechargement automatique à la modification du fichier (mtime + debounce).
 - [ ] P02 [P1][MVP] Rechargement manuel via touche dédiée.
 - [ ] P03 [P2][V2] Diff visuel des tâches ajoutées/supprimées.
 
@@ -167,13 +167,13 @@
 - [ ] Q03 [P2][V2] Endpoint local debug (facultatif) pour état JSON.
 
 ### R) Vérification de robustesse [P1][MVP]
-- [ ] R01 [P0][MVP] Créer l'ossature `tests/unit`, `tests/integration`, `tests/smoke`, `tests/stubs` — AC: `python -m pytest -q` découvre les tests sans erreur d'import.
+- [x] R01 [P0][MVP] Créer l'ossature `tests/unit`, `tests/integration`, `tests/smoke`, `tests/stubs` — AC: `python -m pytest -q` découvre les tests sans erreur d'import.
 - [ ] R02 [P0][MVP] Ajouter fixtures communes (`tmp_path`, `AI_TODO.md` temporaire, `logs/agent.log` temporaire, env isolé) — AC: aucun test n'écrit dans le vrai `logs/agent.log`.
-- [ ] R03 [P0][MVP] Tests unitaires parser TODO — AC: couvre `- [ ]`, `- [x]`, `* [X]`, indentation, sections, lignes invalides, fichier absent.
-- [ ] R04 [P0][MVP] Tests unitaires `build_command` — AC: couvre commande par défaut, commande vide rejetée, `{todo}`, `$TODO`, `%TODO%`, arguments avec espaces.
-- [ ] R05 [P0][MVP] Tests unitaires state machine — AC: transitions légales acceptées, transitions illégales refusées avec erreur contrôlée.
-- [ ] R06 [P0][MVP] Tests unitaires runner avec `FakePopen` — AC: start success, `Popen` exception, exit code 0, exit code non-zero, stop terminate, fallback kill.
-- [ ] R07 [P0][MVP] Tests logs et queue — AC: stdout fake horodaté, envoyé à la queue, écrit en append, limite de queue respectée.
+- [x] R03 [P0][MVP] Tests unitaires parser TODO — AC: couvre `- [ ]`, `- [x]`, `* [X]`, indentation, sections, lignes invalides, fichier absent.
+- [x] R04 [P0][MVP] Tests unitaires `build_command` — AC: couvre commande par défaut, commande vide rejetée, `{todo}`, `$TODO`, `%TODO%`, arguments avec espaces.
+- [x] R05 [P0][MVP] Tests unitaires state machine — AC: transitions légales acceptées, transitions illégales refusées avec erreur contrôlée.
+- [x] R06 [P0][MVP] Tests unitaires runner avec `FakePopen` — AC: start success, `Popen` exception, exit code 0, exit code non-zero, stop terminate, fallback kill.
+- [x] R07 [P0][MVP] Tests logs et queue — AC: stdout fake horodaté, envoyé à la queue, écrit en append, limite de queue respectée.
 - [ ] R08 [P1][MVP] Tests rendu TUI pur — AC: rendu ne crashe pas à 60/80/120 colonnes, status bar contient state/model/errors.
 - [ ] R09 [P1][MVP] Tests boucle non bloquante avec fake key reader — AC: séquence `r`, `s`, `q` termine sans attendre une vraie entrée clavier.
 - [ ] R10 [P1][MVP] Test de restauration terminal après exception simulée pendant la boucle UI — AC: cleanup appelé en `finally`.
@@ -184,15 +184,15 @@
 - [ ] S02 [P1][V2] Recherche textuelle légère dans la vue droite.
 
 ### T) Vérification smoke [P0][MVP]
-- [ ] T01 [P0][MVP] Créer `tests/stubs/codex_stub.py` — AC: modes `success`, `fail`, `sleep`, `spam` produisent stdout déterministe et exit code attendu.
-- [ ] T02 [P0][MVP] Smoke stub success — AC: parse TODO -> run stub success -> logs visibles/persistés -> retour `IDLE` -> `errors=0`.
-- [ ] T03 [P0][MVP] Smoke stub fail — AC: run stub fail -> message `[ERROR]` visible -> état `ERROR` ou retour contrôlé -> `errors=1` -> nouveau run possible.
-- [ ] T04 [P0][MVP] Smoke stop — AC: run stub `sleep` -> stop -> terminate puis cleanup -> pas de process enfant restant.
-- [ ] T05 [P1][MVP] Smoke charge logs — AC: run stub `spam` produit beaucoup de lignes, l'UI reste réactive et la queue ne dépasse pas `MAX_LOG_LINES`.
+- [x] T01 [P0][MVP] Créer `tests/stubs/codex_stub.py` — AC: modes `success`, `fail`, `sleep`, `spam` produisent stdout déterministe et exit code attendu.
+- [x] T02 [P0][MVP] Smoke stub success — AC: parse TODO -> run stub success -> logs visibles/persistés -> retour `IDLE` -> `errors=0`.
+- [x] T03 [P0][MVP] Smoke stub fail — AC: run stub fail -> message `[ERROR]` visible -> état `ERROR` ou retour contrôlé -> `errors=1` -> nouveau run possible.
+- [x] T04 [P0][MVP] Smoke stop — AC: run stub `sleep` -> stop -> terminate puis cleanup -> pas de process enfant restant.
+- [x] T05 [P1][MVP] Smoke charge logs — AC: run stub `spam` produit beaucoup de lignes, l'UI reste réactive et la queue ne dépasse pas `MAX_LOG_LINES`.
 - [ ] T06 [P1][MVP] Smoke refresh TODO — AC: modifier `AI_TODO.md` pendant la boucle met à jour la liste sans redémarrer l'app.
 
 ### U) Qualité code [P1][MVP]
-- [ ] U01 [P0][MVP] Refactor en couches testables `core` + `runner` + `ui` + `io` — AC: parser, commande, runner et rendu sont appelables sans terminal interactif.
+- [x] U01 [P0][MVP] Refactor en couches testables `core` + `runner` + `ui` + `io` — AC: parser, commande, runner et rendu sont appelables sans terminal interactif.
 - [ ] U02 [P1][MVP] Ajouter docstrings et annotations de type essentielles — AC: les interfaces publiques (`Config`, `Task`, `Runner`, `Cockpit`) sont typées.
 - [ ] U03 [P1][MVP] Rendre les dépendances injectables — AC: horloge, filesystem, env, terminal size, key reader et `Popen` sont remplaçables en test.
 - [ ] U04 [P2][V2] Nettoyage dette actuelle (`_truncate`, noms variables, séparation responsabilités) — AC: aucune logique process dans le rendu UI.
@@ -207,43 +207,43 @@
 
 ### W) Packaging / runbook [P1][MVP]
 - [ ] W01 [P1][MVP] Script de lancement fiable (`python -m` ou `.\codexdeck.py`).
-- [ ] W02 [P1][MVP] Ajouter `.gitignore` pour éviter le bruit logs locaux.
-- [ ] W03 [P1][MVP] Ajouter configuration test minimale (`pyproject.toml` ou équivalent) — AC: `python -m pytest -q` fonctionne depuis la racine repo.
-- [ ] W04 [P1][MVP] Ajouter CI GitHub Actions Python — AC: checkout, setup-python, install deps, pytest unit+integration sans Codex réel.
-- [ ] W05 [P1][MVP] Ajouter `requirements.txt` ou `pyproject.toml` minimal — AC: installation reproductible sur environnement propre.
-- [ ] W06 [P1][MVP] Ajouter scripts locaux `scripts/dev.ps1`, `scripts/smoke.ps1`, `scripts/test.ps1` avec codes retour non-zero en cas d'échec.
-- [ ] W07 [P1][MVP] Ajouter un stub Codex local pour smoke tests sans dépendre du vrai binaire `codex`.
-- [ ] W08 [P1][MVP] Documenter et tester la création automatique de `logs/` si le dossier est absent.
+- [x] W02 [P1][MVP] Ajouter `.gitignore` pour éviter le bruit logs locaux.
+- [x] W03 [P1][MVP] Ajouter configuration test minimale (`pyproject.toml` ou équivalent) — AC: `python -m pytest -q` fonctionne depuis la racine repo.
+- [x] W04 [P1][MVP] Ajouter CI GitHub Actions Python — AC: checkout, setup-python, install deps, pytest unit+integration sans Codex réel.
+- [x] W05 [P1][MVP] Ajouter `requirements.txt` ou `pyproject.toml` minimal — AC: installation reproductible sur environnement propre.
+- [x] W06 [P1][MVP] Ajouter scripts locaux `scripts/dev.ps1`, `scripts/smoke.ps1`, `scripts/test.ps1` avec codes retour non-zero en cas d'échec.
+- [x] W07 [P1][MVP] Ajouter un stub Codex local pour smoke tests sans dépendre du vrai binaire `codex`.
+- [x] W08 [P1][MVP] Documenter et tester la création automatique de `logs/` si le dossier est absent.
 - [ ] W09 [P2][V2] Préparer packaging simple (requirements/venv lock, entrypoint).
 
 ### X) Documentation [P0][MVP]
-- [ ] X01 [P0][MVP] Mettre à jour `README.md` avec modes d’usage, variables env, commandes, troubleshooting.
-- [ ] X02 [P1][MVP] Ajouter mini-guide de test (`pytest`, smoke, scénarios manuels).
-- [ ] X03 [P1][MVP] Documenter stratégie de mocks — AC: README explique comment tester sans Codex réel avec `FakePopen` et `tests/stubs/codex_stub.py`.
-- [ ] X04 [P1][MVP] Documenter ordre de validation release — AC: unitaires, intégration, smoke stub, smoke manuel listés avec commandes.
-- [ ] X05 [P1][MVP] Ajouter section "Quickstart Windows" avec commandes PowerShell depuis clone frais jusqu'au smoke test.
-- [ ] X06 [P1][MVP] Ajouter section "Dépannage" couvrant `codex` introuvable, permissions logs, terminal trop petit, commande invalide.
+- [x] X01 [P0][MVP] Mettre à jour `README.md` avec modes d’usage, variables env, commandes, troubleshooting.
+- [x] X02 [P1][MVP] Ajouter mini-guide de test (`pytest`, smoke, scénarios manuels).
+- [x] X03 [P1][MVP] Documenter stratégie de mocks — AC: README explique comment tester sans Codex réel avec `FakePopen` et `tests/stubs/codex_stub.py`.
+- [x] X04 [P1][MVP] Documenter ordre de validation release — AC: unitaires, intégration, smoke stub, smoke manuel listés avec commandes.
+- [x] X05 [P1][MVP] Ajouter section "Quickstart Windows" avec commandes PowerShell depuis clone frais jusqu'au smoke test.
+- [x] X06 [P1][MVP] Ajouter section "Dépannage" couvrant `codex` introuvable, permissions logs, terminal trop petit, commande invalide.
 - [ ] X07 [P2][V2] Ajouter schéma d'architecture (inputs/outputs/state machine).
 
 ### Y) Conformité locale / qualité de repo [P1][MVP]
 - [ ] Y01 [P1][MVP] Vérifier ligne fine encodage et chemins `logs/agent.log`.
-- [ ] Y02 [P1][MVP] Ajouter garde-fou d’encodage UTF-8 partout.
+- [x] Y02 [P1][MVP] Ajouter garde-fou d’encodage UTF-8 partout.
 - [ ] Y03 [P2][V2] Prévoir stratégie de secrets si l’environnement nécessite tokens.
-- [ ] Y04 [P1][MVP] Documenter compatibilité console: Windows Terminal, PowerShell, cmd, Git Bash, Linux/macOS terminal.
-- [ ] Y05 [P1][MVP] Normaliser fins de ligne et encodage (`.gitattributes`) pour éviter écarts Windows/Unix.
-- [ ] Y06 [P1][MVP] Ajouter contrôle de git hygiene: `logs/*.log`, caches Python, venv et artefacts locaux exclus du repo.
-- [ ] Y07 [P1][MVP] Ajouter scan sécurité minimal dans `scripts/test.ps1` pour détecter secrets évidents dans logs et fichiers suivis.
-- [ ] Y08 [P1][MVP] Garantir que les chemins fichier sont relatifs au dossier projet ou configurables, jamais codés en absolu.
+- [x] Y04 [P1][MVP] Documenter compatibilité console: Windows Terminal, PowerShell, cmd, Git Bash, Linux/macOS terminal.
+- [x] Y05 [P1][MVP] Normaliser fins de ligne et encodage (`.gitattributes`) pour éviter écarts Windows/Unix.
+- [x] Y06 [P1][MVP] Ajouter contrôle de git hygiene: `logs/*.log`, caches Python, venv et artefacts locaux exclus du repo.
+- [x] Y07 [P1][MVP] Ajouter scan sécurité minimal dans `scripts/test.ps1` pour détecter secrets évidents dans logs et fichiers suivis.
+- [x] Y08 [P1][MVP] Garantir que les chemins fichier sont relatifs au dossier projet ou configurables, jamais codés en absolu.
 
 ### Backend DoD MVP
-- [ ] BD01 [P0][MVP] Tous les composants core sont testables sans terminal interactif et sans process Codex réel.
+- [x] BD01 [P0][MVP] Tous les composants core sont testables sans terminal interactif et sans process Codex réel.
 - [ ] BD02 [P0][MVP] Les erreurs utilisateur ont un `error_code`, un message court, et une cause technique loggée.
 - [ ] BD03 [P0][MVP] Aucun thread lancé par un run ne reste vivant après `stop`, timeout ou fin normale.
-- [ ] BD04 [P0][MVP] Les tests couvrent parser, config, command builder, state machine, process runner, log queue.
+- [x] BD04 [P0][MVP] Les tests couvrent parser, config, command builder, state machine, process runner, log queue.
 
 ### Z) Finalisation MVP -> V2 [P0][MVP]
-- [ ] Z01 [P0][MVP] Critères Go/No-Go automatisés — AC: `python -m pytest -q` passe et couvre parser, commande, runner, state machine, logs.
-- [ ] Z02 [P0][MVP] Critères Go/No-Go smoke — AC: success/fail/stop/spam passent avec stub local et aucun process résiduel.
+- [x] Z01 [P0][MVP] Critères Go/No-Go automatisés — AC: `python -m pytest -q` passe et couvre parser, commande, runner, state machine, logs.
+- [x] Z02 [P0][MVP] Critères Go/No-Go smoke — AC: success/fail/stop/spam passent avec stub local et aucun process résiduel.
 - [ ] Z03 [P0][MVP] Critères Go/No-Go manuel — AC: lancer l'app, appuyer `r`, voir logs live, `s` stoppe, `q` quitte, terminal restauré.
 - [ ] Z04 [P1][MVP] Faire le point qualité: revue de checklist complète + correction des écarts.
 - [ ] Z05 [P1][V2] Gate V2: politiques de timeout avancées + modèle low tokens + stop amélioré + observabilité avancée.

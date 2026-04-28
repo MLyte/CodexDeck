@@ -8,10 +8,57 @@ compatibility while the project moves to the CodexDeck name.
 from __future__ import annotations
 
 import runpy
+import sys
 from pathlib import Path
+
+from codexdeck_core import CockpitConfig
+
+
+SENSITIVE_MARKERS = ("token", "api_key", "apikey", "password", "secret")
+
+
+def _mask_sensitive(value: str) -> str:
+    parts = value.split()
+    masked = []
+    hide_next = False
+    for part in parts:
+        lowered = part.lower()
+        if hide_next:
+            masked.append("***")
+            hide_next = False
+            continue
+        if any(marker in lowered for marker in SENSITIVE_MARKERS):
+            if "=" in part:
+                key, _sep, _raw = part.partition("=")
+                masked.append(f"{key}=***")
+            else:
+                masked.append(part)
+                hide_next = True
+            continue
+        masked.append(part)
+    return " ".join(masked)
+
+
+def print_config() -> None:
+    config = CockpitConfig.from_env(base_dir=Path.cwd())
+    rows = {
+        "todo_path": str(config.todo_path),
+        "log_path": str(config.log_path),
+        "codex_cmd": _mask_sensitive(config.codex_cmd),
+        "model": config.model,
+        "run_timeout": str(config.run_timeout),
+        "stop_timeout": str(config.stop_timeout),
+        "refresh_hz": str(config.refresh_hz),
+        "max_log_lines": str(config.max_log_lines),
+    }
+    for key, value in rows.items():
+        print(f"{key}: {value}")
 
 
 def main() -> None:
+    if "--print-config" in sys.argv[1:]:
+        print_config()
+        return
     runpy.run_path(str(Path(__file__).with_name("agent-cockpit.py")), run_name="__main__")
 
 
