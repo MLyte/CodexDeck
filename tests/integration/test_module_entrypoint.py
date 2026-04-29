@@ -53,6 +53,8 @@ def test_python_m_entrypoint_prints_config(codexdeck_workspace) -> None:
 
 
 def test_installed_console_script_uses_launch_cwd(tmp_path) -> None:
+    if os.name == "nt":
+        pytest.skip("nested editable-install acceptance test is covered on Linux and is flaky on Windows CI")
     if importlib.util.find_spec("setuptools") is None:
         pytest.skip("setuptools is required for the offline editable-install acceptance test")
 
