@@ -37,4 +37,4 @@ The integration suite includes a temporary install check that verifies `codexdec
 - `CHANGELOG.md` includes the release notes.
 - `codexdeck --version` matches the release tag.
 - No tests require the real Codex CLI.
-
+- Version bump and wheel install flow follows `docs/pipx-release.md` (patch auto-bump + build + pipx).

@@ -41,6 +41,7 @@ class ProcessNotRunning(RunnerError):
 class ProcessHandle(Protocol):
     pid: int
     stdout: Optional[TextIO]
+    stdin: Optional[TextIO]
 
     def poll(self) -> Optional[int]:
         ...
@@ -62,9 +63,10 @@ PopenFactory = Callable[..., ProcessHandle]
 
 
 class _PtyProcessHandle:
-    def __init__(self, process: ProcessHandle, stdout: TextIO) -> None:
+    def __init__(self, process: ProcessHandle, stdout: TextIO, stdin: TextIO | None = None) -> None:
         self._process = process
         self.stdout = stdout
+        self.stdin = stdin
 
     @property
     def pid(self) -> int:
@@ -88,6 +90,8 @@ class _PtyProcessHandle:
     def close(self) -> None:
         if not self.stdout.closed:
             self.stdout.close()
+        if self.stdin is not None and not self.stdin.closed:
+            self.stdin.close()
 
 
 def _spawn_with_pty(factory: PopenFactory, args: list[str], kwargs: dict[str, object]) -> ProcessHandle:
@@ -108,7 +112,12 @@ def _spawn_with_pty(factory: PopenFactory, args: list[str], kwargs: dict[str, ob
         raise
     os.close(slave_fd)
     stdout = os.fdopen(master_fd, "r", encoding="utf-8", errors="replace", newline="")
-    return _PtyProcessHandle(process, stdout)
+    try:
+        stdin = os.fdopen(os.dup(master_fd), "w", encoding="utf-8", errors="replace", buffering=1)
+    except Exception:
+        stdout.close()
+        raise
+    return _PtyProcessHandle(process, stdout, stdin)
 
 
 @dataclass(frozen=True)
@@ -267,6 +276,7 @@ class CodexProcessRunner:
                     popen_kwargs: dict[str, object] = {
                         "stdout": subprocess.PIPE,
                         "stderr": subprocess.STDOUT,
+                        "stdin": subprocess.PIPE,
                         "text": True,
                         "bufsize": 1,
                     }
@@ -419,6 +429,21 @@ class CodexProcessRunner:
 
     def logs(self) -> list[str]:
         return self.log_buffer.lines()
+
+    def send_input(self, text: str) -> bool:
+        payload = text if text.endswith("\n") else f"{text}\n"
+        with self._lock:
+            if self._process is None or self._process.stdin is None or not self._is_running_locked():
+                return False
+            try:
+                self._process.stdin.write(payload)
+                self._process.stdin.flush()
+            except Exception:
+                self._record_error_locked()
+                self.last_error = "PROCESS_INPUT_FAILED"
+                self._record_event_locked(self.last_error, level="ERROR")
+                return False
+            return True
 
     def _is_running_locked(self) -> bool:
         return self._process is not None and self._process.poll() is None

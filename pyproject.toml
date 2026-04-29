@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codexdeck"
-version = "0.1.0"
+version = "0.1.1"
 description = "A local terminal cockpit for running Codex against an AI_TODO.md plan."
 readme = "README.md"
 requires-python = ">=3.10"

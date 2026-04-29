@@ -31,6 +31,38 @@ from codexdeck.runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessN
 from codexdeck.ui import RenderStatus, clamp_task_offset, format_duration, render_frame, truncate
 
 
+PROMPT_KEYWORDS = (
+    "tu veux",
+    "voulez",
+    "souhaitez",
+    "veux",
+    "veux-tu",
+    "want to",
+    "would you",
+    "do you",
+    "shall",
+    "should",
+    "confirm",
+    "proceed",
+    "continue",
+    "accepte",
+    "est-ce",
+    "est ce",
+)
+
+PROMPT_START_RE = re.compile(
+    r"^\s*(?:codex output:\s*)?(?:tu\s+veux|vous\s+voulez|souhaitez|voulez-vous|veux?\s*[-a-z]*\s+que|"
+    r"do\s+you|would\s+you|shall\s+we|should\s+we|confirm|proceed|continue|acceptez?|accepter|"
+    r"est-ce|est\s+ce)\b",
+    re.IGNORECASE,
+)
+
+PROMPT_HINT_RE = re.compile(
+    r"\(\s*[yn]\s*/\s*[yn]\s*\)|\[\s*[yn]\s*/\s*[yn]\s*\]|\byes/no\b|\boui/non\b",
+    re.IGNORECASE,
+)
+
+
 class KeyReader:
     """Cross-platform non-blocking keyboard reader."""
 
@@ -229,6 +261,7 @@ class Cockpit:
         self.permissions = self._choices_with_current(config.permissions, config.permission)
         self.permission = config.permission
         self.quit_confirmation = False
+        self._run_prompt: str | None = None
         self.task_input_active = False
         self.task_input_buffer = ""
         self.auto_mode = False
@@ -289,6 +322,7 @@ class Cockpit:
 
     def _start_codex(self) -> None:
         try:
+            self._run_prompt = None
             task = self._next_open_task()
             if not self.todo_path.exists():
                 self.runner.log_buffer.append("> AI_TODO.md not found. Press n to add the first task.")
@@ -358,6 +392,8 @@ class Cockpit:
 
         if status.state == RunnerState.STOPPING:
             return f"Stopping {self.agent_label} on {self.active_task_label or self.last_task_label}."
+        if self._run_prompt:
+            return f"Codex is waiting: {self._truncate(self._run_prompt, 85)} (press y or n)."
         if running:
             return f"[{self._activity_spinner()}] {self.agent_label} is running on {self.active_task_label}."
         if self.quit_confirmation:
@@ -399,19 +435,70 @@ class Cockpit:
     def _display_logs(self, logs: list[str]) -> list[str]:
         visible: list[str] = []
         for line in logs:
-            codex_output = re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s+\[[0-9a-f]{32}\]\s+", line) is not None
-            text = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s+", "", line)
-            text = re.sub(r"\[[0-9a-f]{32}\]\s*", "", text)
-            text = re.sub(r"\[(INFO|WARN|ERROR)\]\s+run\s+[0-9a-f]{32}\s+", "", text)
-            text = re.sub(r"started pid=\d+", "Run started.", text)
-            text = text.replace("finished rc=0", "Run completed successfully.")
-            text = re.sub(r"finished rc=(-?\d+)", r"Run exited with code \1.", text)
-            if re.match(r"codex_stub mode=\w+\s+todo=.*", text):
-                text = "Simulation started."
-            if codex_output:
-                text = f"{self.agent_label} output: {text}"
-            visible.append(text)
+            visible.append(self._normalize_log_line(line))
         return visible
+
+    def _normalize_log_line(self, line: str) -> str:
+        codex_output = re.match(
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s+\[[0-9a-f]{32}\]\s+",
+            line,
+        ) is not None
+        text = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s+", "", line)
+        text = re.sub(r"\[[0-9a-f]{32}\]\s*", "", text)
+        text = re.sub(r"\[(INFO|WARN|ERROR)\]\s+run\s+[0-9a-f]{32}\s+", "", text)
+        text = re.sub(r"started pid=\d+", "Run started.", text)
+        text = text.replace("finished rc=0", "Run completed successfully.")
+        text = re.sub(r"finished rc=(-?\d+)", r"Run exited with code \1.", text)
+        if re.match(r"codex_stub mode=\w+\s+todo=.*", text):
+            text = "Simulation started."
+        if codex_output:
+            return f"{self.agent_label} output: {text}"
+        return text
+
+    @staticmethod
+    def _looks_like_prompt(line: str) -> bool:
+        text = line.strip()
+        if not text or len(text) > 300:
+            return False
+        if PROMPT_HINT_RE.search(text):
+            return True
+        lowered = text.lower()
+        if "?" in text and any(keyword in lowered for keyword in PROMPT_KEYWORDS):
+            return True
+        return PROMPT_START_RE.search(text) is not None
+
+    def _refresh_run_prompt(self, status: RunStatus) -> None:
+        if not self._status_running(status):
+            self._run_prompt = None
+            return
+        prompt = None
+        for line in reversed(self.runner.logs()):
+            normalized = self._normalize_log_line(line)
+            if self._looks_like_prompt(normalized):
+                prompt = normalized
+                break
+        if prompt is not None and prompt != self._run_prompt:
+            self._run_prompt = prompt
+            self.runner.log_buffer.append(f"> Codex asks: {prompt}")
+
+    def _submit_run_prompt_answer(self, answer: str) -> None:
+        if not self._run_prompt:
+            return
+        if self.runner.send_input(answer):
+            self._record_user_event(f"codex prompt answered | prompt={self._run_prompt} | answer={answer}")
+            self.runner.log_buffer.append(f"> Sent '{answer}' to Codex.")
+            self._run_prompt = None
+        else:
+            self.runner.log_buffer.append("> Cannot send input to Codex. Press s to stop the run, then run again.")
+
+    def _handle_run_prompt_key(self, key: str) -> None:
+        if key == "y":
+            self._submit_run_prompt_answer("y")
+        elif key in {"n", "\x1b"}:
+            self._submit_run_prompt_answer("n")
+        else:
+            self.runner.log_buffer.append("> Waiting for confirmation: press y to accept, n to decline.")
+        return
 
     @staticmethod
     def _help_lines() -> list[str]:
@@ -717,13 +804,16 @@ class Cockpit:
             while True:
                 self.load_todo_if_changed()
                 runner_status = self.runner.status()
+                self._refresh_run_prompt(runner_status)
                 key = key_reader.get_key()
                 if key:
                     if self.task_input_active:
                         self._handle_task_input_key(key)
                     else:
                         k = key.lower()
-                        if self.quit_confirmation:
+                        if self._run_prompt is not None:
+                            self._handle_run_prompt_key(k)
+                        elif self.quit_confirmation:
                             if k == "y":
                                 break
                             if k in {"n", "\x1b"}:

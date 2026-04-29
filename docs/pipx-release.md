@@ -89,6 +89,7 @@ The built wheel filename should match the bumped version and can be installed by
 ```
 
 Use this when you want: bump version -> build -> install in one go.
+Use the script instead (`./scripts/setup-codexdeck-pipx.sh --inspect-logs`) when you want version + install + post-install checks in one shot.
 
 ### One-shot build + pipx install (Windows / PowerShell)
 
@@ -104,6 +105,26 @@ if (-not $wheel) { throw "No wheel found in dist\\." }
 pipx install --force $wheel.FullName
 if (Get-Command hash -ErrorAction SilentlyContinue) { hash -r } else { $env:Path = [Environment]::GetEnvironmentVariable("PATH","Process") }
 codexdeck --version
+```
+
+### One-shot diagnostics for logs (Linux / WSL)
+
+```bash
+./scripts/setup-codexdeck-pipx.sh --auto --inspect-logs
+tail -n 40 logs/agent.log
+tail -n 40 logs/user.log
+
+# to stream:
+./scripts/setup-codexdeck-pipx.sh --auto --follow-logs
+```
+
+### One-shot diagnostics for logs (Windows / PowerShell)
+
+```powershell
+bash scripts/setup-codexdeck-pipx.sh --auto --inspect-logs
+Get-Content -Path logs/agent.log -Tail 40
+Get-Content -Path logs/user.log -Tail 40
+bash scripts/setup-codexdeck-pipx.sh --auto --follow-logs
 ```
 
 ## 4) Deploy locally with pipx
@@ -148,20 +169,23 @@ pipx install --force git+https://github.com/MLyte/CodexDeck.git@v0.1.2
 From Linux/macOS/WSL:
 
 ```bash
-git fetch --tags --force
-LATEST_TAG="$(git tag --sort=-v:refname | grep '^v[0-9]' | head -n 1)"
-pipx install --force "git+https://github.com/MLyte/CodexDeck.git@${LATEST_TAG}"
-codexdeck --version
+./scripts/setup-codexdeck-pipx.sh --git-latest
 ```
 
 From PowerShell:
 
 ```powershell
-git fetch --tags --force
-$latestTag = (git tag --sort=-v:refname | Where-Object { $_ -match '^v[0-9]' } | Select-Object -First 1)
-if (-not $latestTag) { throw "No v* tag found" }
-pipx install --force "git+https://github.com/MLyte/CodexDeck.git@${latestTag}"
-codexdeck --version
+bash scripts/setup-codexdeck-pipx.sh --git-latest
+```
+
+To pin a specific release:
+
+```bash
+./scripts/setup-codexdeck-pipx.sh --git-latest --tag v0.1.2
+```
+
+```powershell
+bash scripts/setup-codexdeck-pipx.sh --git-latest --tag v0.1.2
 ```
 
 ## 7) Pre-flight checks before pipx install
