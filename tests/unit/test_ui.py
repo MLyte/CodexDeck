@@ -84,7 +84,7 @@ def test_render_shows_codexdeck_ascii_header_when_space_allows() -> None:
 
     lines = frame.splitlines()
     assert len(lines) == 30
-    assert "___          _            ___" in frame
+    assert "▄█████  ▄▄▄  ▄▄▄▄" in frame
     assert "AI_TODO.md 1-1/1" in frame
 
 
@@ -94,10 +94,29 @@ def test_render_hides_codexdeck_ascii_header_when_height_is_tight() -> None:
         logs=[],
         status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
         width=100,
-        height=22,
+        height=21,
     )
 
-    assert "___          _            ___" not in frame
+    assert "▄█████" not in frame
+
+
+def test_render_keeps_codexdeck_ascii_header_with_help_when_space_allows() -> None:
+    frame = render_frame(
+        tasks=[Task("task")],
+        logs=[
+            "Help: CodexDeck keeps AI_TODO.md visible, runs one Codex process, and streams output.",
+            "made by lyte | GitHub: https://github.com/MLyte/CodexDeck",
+        ],
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
+        width=120,
+        height=36,
+        show_help=True,
+    )
+
+    assert "▄█████  ▄▄▄  ▄▄▄▄" in frame
+    assert "Codex Output" in frame
+    assert "Help: CodexDeck keeps AI_TODO.md visible" in frame
+    assert "made by lyte | GitHub: https://github.com/MLyte/CodexDeck" in frame
 
 
 def test_render_status_message_is_visible() -> None:

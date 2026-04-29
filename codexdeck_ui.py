@@ -54,10 +54,9 @@ ASCII_BORDERS = {
 }
 
 CODEXDECK_ART = (
-    "  ___          _            ___           _    ",
-    " / __|___  __| |_____ __  |   \\ ___ __ | |__ ",
-    "| (__/ _ \\/ _` / -_) \\ /  | |) / -_) _|| / / ",
-    " \\___\\___/\\__,_\\___/_\\_\\  |___/\\___\\__||_\\_\\",
+    "▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄ ▄▄ ▄▄ ████▄  ▄▄▄▄▄  ▄▄▄▄ ▄▄ ▄▄ ",
+    "██     ██▀██ ██▀██ ██▄▄  ▀█▄█▀ ██  ██ ██▄▄  ██▀▀▀ ██▄█▀ ",
+    "▀█████ ▀███▀ ████▀ ██▄▄▄ ██ ██ ████▀  ██▄▄▄ ▀████ ██ ██",
 )
 
 
@@ -172,10 +171,9 @@ def render_frame(
     borders = ASCII_BORDERS if ascii_borders else UNICODE_BORDERS
     content_width = width - 2
     show_header = (
-        not show_help
-        and not ascii_borders
+        not ascii_borders
         and content_width >= max(len(line) for line in CODEXDECK_ART)
-        and height >= 23
+        and height >= (30 if show_help else 22)
     )
     header_h = len(CODEXDECK_ART) + 1 if show_header else 0
     available_h = max(6, height - 11 - header_h)
@@ -222,7 +220,10 @@ def render_frame(
     output_lines = list(logs)[:log_h] if show_help else list(logs)[-log_h:]
     log_texts = [truncate(line, content_width - 2) for line in output_lines]
     while len(log_texts) < log_h:
-        log_texts.insert(0, "")
+        if show_help:
+            log_texts.append("")
+        else:
+            log_texts.insert(0, "")
     rendered.extend(borders["v"] + text.ljust(content_width) + borders["v"] for text in log_texts)
 
     rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
