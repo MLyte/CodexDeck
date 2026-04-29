@@ -3,8 +3,9 @@ $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $RepoRoot
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
+$Basetemp = Join-Path ".pytest-tmp" ("test-" + $PID)
 
-python -m pytest -q
+python -m pytest -q --basetemp=$Basetemp
 
 $tracked = git ls-files
 $secretPattern = "(?i)(api[_-]?key|password|secret|token)\s*[:=]\s*['""]?[^'""\s]+"
