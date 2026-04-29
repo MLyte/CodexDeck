@@ -18,6 +18,15 @@ from typing import Mapping, Optional
 
 
 SUBPROCESS_SHELL = False
+DEFAULT_MODELS = (
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.2",
+)
+DEFAULT_FAST_MODEL = "gpt-5.3-codex-spark"
 
 
 class ErrorCode(str, Enum):
@@ -56,8 +65,13 @@ class StateTransitionError(CodexDeckError):
 class CockpitConfig:
     todo_path: Path
     log_path: Path
+    user_log_path: Path
     codex_cmd: str = "codex {todo}"
-    model: str = "normal"
+    model: str = DEFAULT_MODELS[0]
+    models: tuple[str, ...] = DEFAULT_MODELS
+    fast_model: str = DEFAULT_FAST_MODEL
+    permission: str = "default"
+    permissions: tuple[str, ...] = ("default", "read-only", "workspace-write", "danger-full-access")
     run_timeout: float = 3600.0
     stop_timeout: float = 5.0
     refresh_hz: float = 8.0
@@ -83,11 +97,27 @@ class CockpitConfig:
             source.get("CODEX_LOG_PATH") or source.get("LOG_PATH") or str(Path("logs") / "agent.log"),
             root,
         )
+        user_log_path = _resolve_path(
+            source.get("CODEX_USER_LOG_PATH") or source.get("USER_LOG_PATH") or str(Path("logs") / "user.log"),
+            root,
+        )
+        model = source.get("CODEX_MODEL", DEFAULT_MODELS[0])
+        fast_model = source.get("CODEX_FAST_MODEL", DEFAULT_FAST_MODEL)
+        permission = source.get("CODEX_PERMISSION", "default")
         config = cls(
             todo_path=todo_path,
             log_path=log_path,
+            user_log_path=user_log_path,
             codex_cmd=source.get("CODEX_CMD", "codex {todo}"),
-            model=source.get("CODEX_MODEL", "normal"),
+            model=model,
+            models=_csv_values(source.get("CODEX_MODELS"), defaults=DEFAULT_MODELS, required=(model,)),
+            fast_model=fast_model,
+            permission=permission,
+            permissions=_csv_values(
+                source.get("CODEX_PERMISSIONS"),
+                defaults=(permission, "read-only", "workspace-write", "danger-full-access"),
+                required=(permission,),
+            ),
             run_timeout=_float_env(source, "RUN_TIMEOUT_SECONDS", 3600.0),
             stop_timeout=_float_env(source, "STOP_TIMEOUT_SECONDS", 5.0),
             refresh_hz=_float_env(source, "STATE_REFRESH_HZ", 8.0),
@@ -101,6 +131,18 @@ class CockpitConfig:
             raise ConfigError(ErrorCode.INVALID_CONFIG, "CODEX_CMD must not be empty")
         if not str(self.model).strip():
             raise ConfigError(ErrorCode.INVALID_CONFIG, "CODEX_MODEL must not be empty")
+        if not self.models:
+            raise ConfigError(ErrorCode.INVALID_CONFIG, "CODEX_MODELS must include at least one model")
+        if any(not str(model).strip() for model in self.models):
+            raise ConfigError(ErrorCode.INVALID_CONFIG, "CODEX_MODELS must not include empty values")
+        if not str(self.fast_model).strip():
+            raise ConfigError(ErrorCode.INVALID_CONFIG, "CODEX_FAST_MODEL must not be empty")
+        if not str(self.permission).strip():
+            raise ConfigError(ErrorCode.INVALID_CONFIG, "CODEX_PERMISSION must not be empty")
+        if not self.permissions:
+            raise ConfigError(ErrorCode.INVALID_CONFIG, "CODEX_PERMISSIONS must include at least one permission")
+        if any(not str(permission).strip() for permission in self.permissions):
+            raise ConfigError(ErrorCode.INVALID_CONFIG, "CODEX_PERMISSIONS must not include empty values")
         if self.run_timeout <= 0:
             raise ConfigError(ErrorCode.INVALID_CONFIG, "RUN_TIMEOUT_SECONDS must be greater than 0")
         if self.stop_timeout <= 0:
@@ -267,6 +309,18 @@ def _read_config_file(path: Path) -> dict[str, str]:
             )
         values[key] = value.strip()
     return values
+
+
+def _csv_values(value: str | None, *, defaults: tuple[str, ...], required: tuple[str, ...] = ()) -> tuple[str, ...]:
+    raw_values = defaults if value is None else tuple(part.strip() for part in value.split(","))
+    if value is not None and not any(str(raw_value).strip() for raw_value in raw_values):
+        return ()
+    values: list[str] = []
+    for raw_value in (*raw_values, *required):
+        item = str(raw_value).strip()
+        if item and item not in values:
+            values.append(item)
+    return tuple(values)
 
 
 def _float_env(source: Mapping[str, str], key: str, default: float) -> float:

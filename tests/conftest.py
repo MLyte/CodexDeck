@@ -8,10 +8,15 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REAL_LOG_PATH = REPO_ROOT / "logs" / "agent.log"
+REAL_USER_LOG_PATH = REPO_ROOT / "logs" / "user.log"
 
 CODEXDECK_ENV_KEYS = (
     "CODEX_CMD",
     "CODEX_MODEL",
+    "CODEX_MODELS",
+    "CODEX_FAST_MODEL",
+    "CODEX_PERMISSION",
+    "CODEX_PERMISSIONS",
     "RUN_TIMEOUT_SECONDS",
     "STOP_TIMEOUT_SECONDS",
     "STATE_REFRESH_HZ",
@@ -20,6 +25,8 @@ CODEXDECK_ENV_KEYS = (
     "TODO_PATH",
     "CODEX_LOG_PATH",
     "LOG_PATH",
+    "CODEX_USER_LOG_PATH",
+    "USER_LOG_PATH",
     "NO_COLOR",
     "FORCE_COLOR",
 )
@@ -37,6 +44,7 @@ def isolated_codexdeck_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Keep tests away from user env and the repository log file."""
 
     before = REAL_LOG_PATH.read_bytes() if REAL_LOG_PATH.exists() else None
+    before_user = REAL_USER_LOG_PATH.read_bytes() if REAL_USER_LOG_PATH.exists() else None
 
     for key in CODEXDECK_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
@@ -47,11 +55,14 @@ def isolated_codexdeck_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     isolated_root.mkdir()
     monkeypatch.setenv("CODEX_TODO_PATH", str(isolated_root / "AI_TODO.md"))
     monkeypatch.setenv("CODEX_LOG_PATH", str(isolated_root / "logs" / "agent.log"))
+    monkeypatch.setenv("CODEX_USER_LOG_PATH", str(isolated_root / "logs" / "user.log"))
 
     yield
 
     after = REAL_LOG_PATH.read_bytes() if REAL_LOG_PATH.exists() else None
+    after_user = REAL_USER_LOG_PATH.read_bytes() if REAL_USER_LOG_PATH.exists() else None
     assert after == before, "tests must not write to the repository logs/agent.log"
+    assert after_user == before_user, "tests must not write to the repository logs/user.log"
 
 
 @pytest.fixture

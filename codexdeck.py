@@ -44,8 +44,13 @@ def print_config() -> None:
     rows = {
         "todo_path": str(config.todo_path),
         "log_path": str(config.log_path),
+        "user_log_path": str(config.user_log_path),
         "codex_cmd": _mask_sensitive(config.codex_cmd),
         "model": config.model,
+        "models": ", ".join(config.models),
+        "fast_model": config.fast_model,
+        "permission": config.permission,
+        "permissions": ", ".join(config.permissions),
         "run_timeout": str(config.run_timeout),
         "stop_timeout": str(config.stop_timeout),
         "refresh_hz": str(config.refresh_hz),

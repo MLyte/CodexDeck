@@ -1,12 +1,14 @@
 # CodexDeck
 
-CodexDeck is a local terminal cockpit for running one Codex process against an
-`AI_TODO.md` file.
+## English
 
-It is not an autonomous backlog manager yet. Today it reads the TODO file,
-shows the open tasks, starts/stops a single Codex command, streams output, and
-writes logs. CodexDeck does not mark tasks done, edit `AI_TODO.md`, or manage
-multiple agents.
+CodexDeck is a local terminal cockpit for running one Codex process against an
+`AI_TODO.md` work plan.
+
+Its job is simple: keep the plan visible, stream Codex output live, and expose
+the controls needed to guide one local Codex run without leaving the terminal.
+
+![CodexDeck terminal UI screenshot](docs/codexdeck-tui.svg)
 
 ```text
 +--------------------------------------------------------------------------+
@@ -23,44 +25,131 @@ multiple agents.
 | Tasks: 0 done | 2 open | 2 total                                         |
 | Last run: 21:42:10 | Duration: 12s | Errors: 0                           |
 +--------------------------------------------------------------------------+
-| Status: RUNNING | [|] Codex is running on line 1: First task to run ...   |
+| Status: RUNNING | Up: 12s | Dur: - | Err: 0 | [|] Codex is running ...  |
+| (M)odel: gpt-5.5 | (F)ast: off | (Pe)rm: default | Aut(o): off       |
+| Keys: (r)un CodexDeck | (s)top | (q)uit | (n)ew | ↑↓ scroll | ...     |
 +--------------------------------------------------------------------------+
 ```
 
-## Current State
+### What CodexDeck Does
 
-What works now:
+**Plan visibility**
 
-- Horizontal TUI sections: `AI_TODO.md` on top, Codex output in the middle, task summary at the bottom.
-- Bottom status bar with state, model, last run, uptime/duration, errors, and a short activity message.
-- Compact mode when the terminal is smaller than 80 columns or 20 rows.
-- First unchecked task is highlighted as the current target when a run starts.
-- Task summary shows the current or last target, done/open/total counts, last run time, duration, and errors.
-- Missing TODO file guidance, with `n` to create a starter `AI_TODO.md`.
-- Manual and automatic TODO reload based on file modification time.
-- One child process at a time, with start/stop/run-timeout handling.
-- Live in-memory logs plus persistent append logs in `logs/agent.log`.
-- Testable core, runner, parser, and renderer without the real `codex` binary.
+- Reads and parses `AI_TODO.md`.
+- Highlights the first unchecked task as the current target.
+- Keeps long Markdown task lists scrollable with arrow keys and Page Up/Page Down.
+- Reloads the TODO file manually with `l` or automatically when the file changes.
+- Opens a typed task input with `n`; `Ctrl-S` saves it and `Esc` cancels.
+- Creates `AI_TODO.md` automatically when saving the first typed task.
 
-Current stance:
+**Codex control**
 
-- README and user-facing TUI copy should stay English-only.
-- `AI_TODO.md` is still the project backlog and may contain older implementation notes.
-- The current layout is horizontal. There is a compact task summary, but no detailed per-run report yet.
+- Starts one Codex process with `r`.
+- Prevents concurrent runs.
+- Stops the active process with `s`.
+- Shows live Codex output in the terminal.
+- Tracks run state, uptime, duration, and error count.
+- Uses an alternate terminal screen so CodexDeck feels like a terminal app.
+- Restores the terminal when quitting.
 
-## Quick Start
+**Run options**
+
+- Cycles model labels with `m`.
+- Toggles fast mode with `f`.
+- Cycles permission labels with `p`.
+- Toggles automatic mode with `o`.
+- Shows option state in the footer: `Model`, `Fast`, `Perm`, `Auto`.
+- Supports command placeholders so these options can be wired into `CODEX_CMD`.
+
+**Automatic mode**
+
+Automatic mode is conservative. When `Auto` is on, CodexDeck starts another run
+only after the current process exits successfully and the first open task in
+`AI_TODO.md` has changed. If Codex finishes but leaves the same task unchecked,
+CodexDeck pauses automatic mode instead of looping forever.
+
+CodexDeck does not mark tasks done itself. The Codex run must update
+`AI_TODO.md`.
+
+**Logs and feedback**
+
+- Keeps live logs in memory.
+- Writes process logs to `logs/agent.log`.
+- Writes user-facing events to `logs/user.log`.
+- Sanitizes sensitive-looking log fragments.
+- Decodes batched POSIX arrow keys so repeated scrolling does not flood logs
+  with ignored escape fragments.
+- Shows `Press h for help` instead of duplicating all shortcuts in the output.
+- Shows a detailed `CodexDeck Help` view in the output panel with a short app summary, grouped commands, and the GitHub link.
+- The `made by lyte` credit is linked in the help view: `https://github.com/MLyte/CodexDeck`.
+
+### Controls
+
+The footer keeps the main shortcuts visible in one mnemonic line.
+
+- `(r)un CodexDeck`: start the current run.
+- `(s)top`: stop the active run.
+- `(q)uit`: ask for quit confirmation.
+- `re(l)oad`: reload `AI_TODO.md`.
+- `(n)ew`: type a new task, then press `Ctrl-S` to save.
+- `(m)odel`: cycle configured model labels.
+- `(f)ast`: toggle fast mode.
+- `(p)erms`: cycle permission labels.
+- `aut(o)`: toggle automatic mode.
+- `↑↓ scroll`: move through the task list.
+- `Page Up` / `Page Down`: scroll by one visible page.
+- `(h)elp` or `?`: toggle the detailed help view in the output panel.
+
+### Configuration
+
+CodexDeck reads `codexdeck.conf` from the project root when present, then applies
+environment variable overrides. The config format is one `KEY=VALUE` pair per
+line. Empty lines and `#` comments are ignored.
+
+Main settings:
+
+- `CODEX_CMD`: command used to start Codex. Default: `codex {todo}`.
+- `CODEX_MODEL`: model label shown in CodexDeck. Default: `gpt-5.5`.
+- `CODEX_MODELS`: comma-separated labels cycled by `m`.
+- `CODEX_FAST_MODEL`: model label used when fast mode is on.
+- `CODEX_PERMISSION`: current permission label.
+- `CODEX_PERMISSIONS`: comma-separated labels cycled by `p`.
+- `RUN_TIMEOUT_SECONDS`: maximum run duration before controlled stop.
+- `STOP_TIMEOUT_SECONDS`: stop escalation delay.
+- `STATE_REFRESH_HZ`: UI refresh rate.
+- `MAX_LOG_LINES`: max in-memory log lines.
+- `CODEX_TODO_PATH` or `TODO_PATH`: TODO file path. Default: `AI_TODO.md`.
+- `CODEX_LOG_PATH` or `LOG_PATH`: process log path. Default: `logs/agent.log`.
+- `CODEX_USER_LOG_PATH` or `USER_LOG_PATH`: user event log path. Default: `logs/user.log`.
+- `CODEX_CONFIG_PATH`: alternate config file path.
+- `CODEX_ASCII_BORDERS=1`: force ASCII borders.
+
+Supported command placeholders:
+
+- `{todo}`: resolved TODO file path.
+- `{model}`: current effective model.
+- `{permission}`: current permission label.
+- `{fast}`: `1` when fast mode is on, otherwise `0`.
+
+The Codex launch prompt in `CODEX_CMD` should stay English because it is sent
+directly to the model.
+
+Example:
+
+```text
+CODEX_CMD=codex exec --model {model} --sandbox {permission} "You are launched by CodexDeck. Read {todo}. Work only on the first unchecked task."
+CODEX_MODELS=gpt-5.5,gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.3-codex-spark,gpt-5.2
+CODEX_FAST_MODEL=gpt-5.3-codex-spark
+CODEX_PERMISSIONS=read-only,workspace-write,danger-full-access
+CODEX_USER_LOG_PATH=logs/user.log
+```
+
+### Run Locally
 
 Requirement: Python 3.9+.
 
-Install test dependencies:
-
 ```bash
 python3 -m pip install -r requirements.txt
-```
-
-Run the app:
-
-```bash
 python3 -m codexdeck
 ```
 
@@ -77,105 +166,23 @@ python3 codexdeck.py
 python3 agent-cockpit.py
 ```
 
-## Controls
-
-- `r`: run Codex on the current `AI_TODO.md`.
-- `s`: stop the active process.
-- `l`: reload `AI_TODO.md`.
-- `n`: create a starter `AI_TODO.md` when it is missing.
-- `h` or `?`: toggle help.
-- `j` / `k`, arrow up/down: scroll tasks.
-- `Page Up` / `Page Down`: scroll tasks by one visible page.
-- `q`: quit.
-
-`r` starts only if `AI_TODO.md` exists and contains at least one unchecked task.
-The process still receives the whole TODO file path, not only the highlighted task.
-
-## Configuration
-
-CodexDeck reads `codexdeck.conf` from the project root when present, then applies
-environment variable overrides. The config file format is one `KEY=VALUE` pair
-per line. Empty lines and `#` comments are ignored.
-
-Supported settings:
-
-- `CODEX_CMD`: command used to start Codex. Default: `codex {todo}`.
-- `CODEX_MODEL`: model label shown in the status bar. Default: `normal`.
-- `RUN_TIMEOUT_SECONDS`: maximum run duration before controlled stop. Default: `3600`.
-- `STOP_TIMEOUT_SECONDS`: delay before escalating stop handling. Default: `5`.
-- `STATE_REFRESH_HZ`: target UI refresh rate. Default: `8`.
-- `MAX_LOG_LINES`: max log lines kept in memory. Default: `5000`.
-- `CODEX_TODO_PATH` or `TODO_PATH`: TODO path. Default: `AI_TODO.md`.
-- `CODEX_LOG_PATH` or `LOG_PATH`: persistent log path. Default: `logs/agent.log`.
-- `CODEX_CONFIG_PATH`: config file path other than `codexdeck.conf`.
-- `CODEX_ASCII_BORDERS=1`: force ASCII borders for terminals with poor Unicode support.
-
-Example `codexdeck.conf`:
-
-```text
-CODEX_CMD=python3 tests/stubs/codex_stub.py --mode success {todo}
-CODEX_MODEL=stub
-MAX_LOG_LINES=200
-```
-
 Stub run without the real Codex CLI:
 
 ```bash
 CODEX_CMD="python3 tests/stubs/codex_stub.py --mode success {todo}" python3 -m codexdeck
 ```
 
-PowerShell equivalent:
+### Project Structure
 
-```powershell
-$env:CODEX_CMD="python tests/stubs/codex_stub.py --mode success {todo}"
-python -m codexdeck
-```
-
-## Architecture
-
-Current file roles:
-
-- `codexdeck.py`: official `python -m codexdeck` entrypoint and `--print-config`.
-- `agent-cockpit.py`: current TUI implementation, kept under the historical name.
+- `codexdeck.py`: official `python -m codexdeck` entrypoint.
+- `agent-cockpit.py`: current CodexDeck app implementation.
 - `codexdeck_core.py`: config loading, TODO parser, command helper, state primitives.
-- `codexdeck_runner.py`: process lifecycle, run metrics, log buffer, persistent log writes.
+- `codexdeck_runner.py`: process lifecycle, run metrics, log buffer, persistent logs.
 - `codexdeck_ui.py`: pure terminal frame rendering and compact mode.
 - `AI_TODO.md`: project backlog and implementation checklist.
 - `tests/stubs/codex_stub.py`: local Codex substitute for smoke tests.
 
-Runtime flow:
-
-```text
-AI_TODO.md + codexdeck.conf/env
-        |
-        v
-python3 -m codexdeck
-        |
-        v
-agent-cockpit.py
-        |
-        +-- codexdeck_core.py    parse config and TODO tasks
-        +-- codexdeck_runner.py  start/stop one child process and write logs
-        +-- codexdeck_ui.py      render the terminal frame
-```
-
-Process states used by the runner:
-
-```text
-IDLE -> STARTING -> RUNNING -> STOPPING -> IDLE
-                         \                 /
-                          ------ ERROR ----
-```
-
-## Tests
-
-Install dependencies first:
-
-```bash
-python3 -m pip install -r requirements.txt
-```
-
-Useful commands from the repo root:
+### Tests
 
 ```bash
 python3 -m pytest tests/unit -q
@@ -184,7 +191,7 @@ python3 -m pytest tests/smoke -q
 python3 -m pytest -q
 ```
 
-PowerShell scripts:
+PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\test.ps1
@@ -192,36 +199,159 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke.ps1
 powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
 ```
 
-The tests do not require the real `codex` binary. They use fake process handles,
-temporary directories, isolated environment variables, and
-`tests/stubs/codex_stub.py`.
+### Current Limits
 
-Manual stub smoke:
+- One Codex process only; no multi-agent or parallel execution.
+- Automatic mode depends on Codex updating `AI_TODO.md`.
+- `n` supports single-line task entry only; CodexDeck is not a full text editor.
+- No detailed per-task completion report yet.
+- No visual diff when `AI_TODO.md` changes.
+- No log search, replay, or rotation.
+- Wide-character layout handling is still basic.
+- Cross-platform keyboard behavior needs broader terminal validation.
+
+---
+
+## Français
+
+CodexDeck est un cockpit terminal local pour lancer un processus Codex à partir
+d'un plan de travail `AI_TODO.md`.
+
+Son rôle est simple : garder le plan visible, afficher la sortie Codex en direct
+et fournir les contrôles nécessaires pour piloter un run Codex local sans quitter
+le terminal.
+
+### Ce Que Fait CodexDeck
+
+**Visibilité du plan**
+
+- Lit et parse `AI_TODO.md`.
+- Met en évidence la première tâche non cochée.
+- Permet de scroller les longues listes Markdown avec les flèches et Page Up/Page Down.
+- Recharge le TODO avec `l` ou automatiquement quand le fichier change.
+- Crée un `AI_TODO.md` de départ avec `n` si le fichier manque.
+- Ouvre une saisie de tâche avec `n`; `Ctrl-S` sauvegarde et `Esc` annule.
+- Crée `AI_TODO.md` automatiquement lors de la sauvegarde de la première tâche.
+
+**Pilotage de Codex**
+
+- Lance Codex avec `r`.
+- Empêche les runs concurrents.
+- Stoppe le run actif avec `s`.
+- Affiche la sortie Codex en direct.
+- Suit l'état, l'uptime, la durée et les erreurs.
+- Utilise un écran terminal alternatif pour renforcer l'effet application.
+- Restaure le terminal à la fermeture.
+
+**Options de run**
+
+- `m` change le modèle affiché.
+- `f` active/désactive le mode fast.
+- `p` change le niveau de permission.
+- `o` active/désactive le mode automatique.
+- Le footer affiche `Model`, `Fast`, `Perm` et `Auto`.
+- Les placeholders de commande permettent de brancher ces options dans `CODEX_CMD`.
+
+**Mode automatique**
+
+Le mode automatique est volontairement prudent. Quand `Auto` est activé,
+CodexDeck relance seulement si le processus précédent s'est terminé avec succès
+et si la première tâche ouverte dans `AI_TODO.md` a changé. Si Codex termine sans
+cocher la tâche courante, CodexDeck met le mode automatique en pause pour éviter
+une boucle.
+
+CodexDeck ne coche pas les tâches lui-même. Le run Codex doit modifier
+`AI_TODO.md`.
+
+**Logs et feedback**
+
+- Logs live en mémoire.
+- Logs process persistés dans `logs/agent.log`.
+- Événements utilisateur persistés dans `logs/user.log`.
+- Nettoyage des fragments de logs qui ressemblent à des secrets.
+- Décodage propre des flèches répétées pour éviter les fragments d'échappement
+  dans les logs.
+- Message de démarrage court : `Press h for help`.
+- Vue d'aide détaillée dans le panneau de sortie avec résumé de l'app, commandes groupées et lien GitHub.
+- Le crédit `made by lyte` est lié dans l'aide : `https://github.com/MLyte/CodexDeck`.
+
+### Raccourcis
+
+Le footer garde les raccourcis principaux visibles sur une seule ligne.
+
+- `(r)un CodexDeck` : lancer CodexDeck.
+- `(s)top` : stopper le run actif.
+- `(q)uit` : demander confirmation avant de quitter.
+- `re(l)oad` : recharger `AI_TODO.md`.
+- `(n)ew` : taper une nouvelle tâche, puis `Ctrl-S` pour sauvegarder.
+- `(m)odel` : changer de modèle.
+- `(f)ast` : activer/désactiver le mode fast.
+- `(p)erms` : changer les permissions.
+- `aut(o)` : activer/désactiver le mode automatique.
+- `↑↓ scroll` : parcourir la liste des tâches.
+- `Page Up` / `Page Down` : scroller par page visible.
+- `(h)elp` ou `?` : afficher l'aide.
+
+### Configuration
+
+CodexDeck lit `codexdeck.conf` à la racine du projet, puis applique les variables
+d'environnement. Le format est `KEY=VALUE`, une entrée par ligne.
+
+Paramètres principaux :
+
+- `CODEX_CMD` : commande de lancement Codex.
+- `CODEX_MODEL` / `CODEX_MODELS` : modèle courant et liste cyclée par `m`.
+- `CODEX_FAST_MODEL` : modèle utilisé en fast mode.
+- `CODEX_PERMISSION` / `CODEX_PERMISSIONS` : permission courante et liste cyclée par `p`.
+- `RUN_TIMEOUT_SECONDS` / `STOP_TIMEOUT_SECONDS` : timeouts de run et stop.
+- `STATE_REFRESH_HZ` : fréquence de refresh.
+- `MAX_LOG_LINES` : nombre maximal de lignes en mémoire.
+- `CODEX_TODO_PATH` ou `TODO_PATH` : chemin du TODO.
+- `CODEX_LOG_PATH` ou `LOG_PATH` : chemin des logs process.
+- `CODEX_USER_LOG_PATH` ou `USER_LOG_PATH` : chemin des événements utilisateur.
+- `CODEX_ASCII_BORDERS=1` : forcer les bordures ASCII.
+
+Placeholders supportés dans `CODEX_CMD` :
+
+- `{todo}` : chemin du fichier TODO.
+- `{model}` : modèle effectif.
+- `{permission}` : permission courante.
+- `{fast}` : `1` si fast mode est actif, sinon `0`.
+
+Le prompt envoyé à Codex via `CODEX_CMD` doit rester en anglais, car il est lu
+directement par le modèle.
+
+### Lancer En Local
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m codexdeck
+```
+
+Afficher la configuration résolue :
+
+```bash
+python3 -m codexdeck --print-config
+```
+
+Run stub sans vrai binaire Codex :
 
 ```bash
 CODEX_CMD="python3 tests/stubs/codex_stub.py --mode success {todo}" python3 -m codexdeck
 ```
 
-Then press `r`, wait for completion, and press `q`.
+### Tests
 
-## Known Limitations
+```bash
+python3 -m pytest -q
+```
 
-- No AI_TODO execution flow beyond selecting the first unchecked task and passing the file to Codex.
-- No automatic task completion, TODO file editing, checkpointing, or detailed run report.
-- No multi-agent or parallel run support.
-- No log search, replay, or rotation.
-- No visual diff when `AI_TODO.md` changes.
-- No `NO_COLOR` / `FORCE_COLOR` support yet.
-- Ellipsis/truncation is simple string-length truncation; wide characters are not fully handled.
-- Cross-platform keyboard handling exists, but OS-specific terminal behavior still needs broader validation.
-- Packaging is minimal: run from the repo with Python, `requirements.txt`, and the provided scripts.
+### Limites Actuelles
 
-## Troubleshooting
-
-- `codex` not found: install the Codex CLI or set `CODEX_CMD` to a valid command.
-- Invalid command: run `python3 -m codexdeck --print-config` and inspect `CODEX_CMD`.
-- No run starts: ensure `AI_TODO.md` exists and has at least one `- [ ] ...` task.
-- Missing logs: check `CODEX_LOG_PATH` or write access to `logs/`; the runner creates the directory automatically.
-- Small terminal: enlarge the terminal; below 80x20 CodexDeck switches to compact mode.
-- Broken borders: run with `CODEX_ASCII_BORDERS=1`.
-- Config error: check that every active `codexdeck.conf` line uses `KEY=VALUE`.
+- Un seul processus Codex à la fois.
+- Pas de multi-agent ni d'exécution parallèle.
+- Le mode automatique dépend des modifications faites par Codex dans `AI_TODO.md`.
+- `n` supporte une saisie de tâche sur une ligne, pas un éditeur complet.
+- Pas encore de rapport détaillé par tâche.
+- Pas de diff visuel quand `AI_TODO.md` change.
+- Pas de recherche, replay ou rotation de logs.

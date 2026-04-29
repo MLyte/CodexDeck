@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from textwrap import wrap
 from typing import Iterable, Protocol
 
 
@@ -18,6 +19,9 @@ class RenderStatus:
     model: str
     last_run: str
     errors: int
+    permission: str = "default"
+    fast_mode: bool = False
+    auto_mode: bool = False
     uptime_seconds: float | None = None
     duration_seconds: float | None = None
     message: str = ""
@@ -49,6 +53,13 @@ ASCII_BORDERS = {
     "rm": "+",
 }
 
+CODEXDECK_ART = (
+    "  ___          _            ___           _    ",
+    " / __|___  __| |_____ __  |   \\ ___ __ | |__ ",
+    "| (__/ _ \\/ _` / -_) \\ /  | |) / -_) _|| / / ",
+    " \\___\\___/\\__,_\\___/_\\_\\  |___/\\___\\__||_\\_\\",
+)
+
 
 def truncate(text: str, width: int) -> str:
     if width <= 0:
@@ -77,6 +88,18 @@ def _pad_line(text: str, width: int) -> str:
     return truncate(text, width).ljust(width)
 
 
+def _wrap_task_text(prefix: str, text: str, width: int) -> list[str]:
+    if width <= 0:
+        return [""]
+    prefix = truncate(prefix, width)
+    text_width = max(1, width - len(prefix))
+    wrapped = wrap(text, width=text_width, break_long_words=False, break_on_hyphens=False) or [""]
+    lines = [truncate(prefix + wrapped[0], width)]
+    continuation_prefix = " " * len(prefix)
+    lines.extend(truncate(continuation_prefix + line, width) for line in wrapped[1:])
+    return lines
+
+
 def clamp_task_offset(task_count: int, visible_count: int, offset: int) -> int:
     if task_count <= 0 or visible_count <= 0:
         return 0
@@ -97,9 +120,16 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
     height = max(1, height)
     lines = [
         "CodexDeck compact mode",
-        f"Status: {status.state} | Model: {status.model} | Up: {format_duration(status.uptime_seconds)} | Errors: {status.errors}",
-        f"Last run: {status.last_run} | Dur: {format_duration(status.duration_seconds)}",
-        "Commands: r run | s stop | l reload | n new TODO | h/? help | q quit",
+        (
+            f"Status: {status.state} | Up: {format_duration(status.uptime_seconds)} | "
+            f"Dur: {format_duration(status.duration_seconds)} | Err: {status.errors}"
+        ),
+        (
+            f"(M)odel: {status.model} | (F)ast: {_on_off(status.fast_mode)} | "
+            f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)}"
+        ),
+        f"Last run: {status.last_run}",
+        "Keys: (r)un CodexDeck | (s)top | (q)uit | re(l)oad | (n)ew | \u2191\u2193 scroll | (h)elp | made by lyte",
     ]
     if status.message:
         lines.insert(2, status.message)
@@ -108,8 +138,10 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
             [
                 "",
                 "Help",
-                "r start Codex, s stop current run, l reload AI_TODO.md",
-                "n create AI_TODO.md skeleton, h/? toggle help, q quit",
+                "CodexDeck keeps AI_TODO.md visible, runs one Codex process, and streams output.",
+                "Options: (M)odel, (F)ast, (Pe)rm, Aut(o)",
+                "Keys: (r)un, (s)top, (q)uit, re(l)oad, (n)ew, \u2191\u2193 scroll, (h)elp",
+                "made by lyte | https://github.com/MLyte/CodexDeck",
             ]
         )
     lines = lines[:height]
@@ -139,13 +171,24 @@ def render_frame(
     height = max(8, height)
     borders = ASCII_BORDERS if ascii_borders else UNICODE_BORDERS
     content_width = width - 2
-    available_h = max(6, height - 9)
-    task_h = max(3, min(8, available_h // 3 + 1))
+    show_header = (
+        not show_help
+        and not ascii_borders
+        and content_width >= max(len(line) for line in CODEXDECK_ART)
+        and height >= 23
+    )
+    header_h = len(CODEXDECK_ART) + 1 if show_header else 0
+    available_h = max(6, height - 11 - header_h)
+    min_task_h = 4 if available_h >= 8 else 3
+    task_h = max(min_task_h, min(8, available_h // 3 + 1))
     summary_h = min(3, max(2, available_h - task_h - 2))
     log_h = max(2, available_h - task_h - summary_h)
 
     rendered: list[str] = []
     rendered.append(borders["tl"] + borders["h"] * content_width + borders["tr"])
+    if show_header:
+        rendered.extend(borders["v"] + line.center(content_width) + borders["v"] for line in CODEXDECK_ART)
+        rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
     task_list = list(tasks)
     task_offset = clamp_task_offset(len(task_list), task_h, task_offset)
 
@@ -157,10 +200,16 @@ def render_frame(
 
     visible_tasks = task_list[task_offset : task_offset + task_h]
     task_texts = []
-    for task in visible_tasks:
+    for task_index, task in enumerate(visible_tasks):
+        if len(task_texts) >= task_h:
+            break
         marker = ">" if active_task_id is not None and getattr(task, "id", None) == active_task_id else " "
         checkbox = "[x]" if task.done else "[ ]"
-        task_texts.append(truncate(f"{marker}{checkbox} {task.text}", content_width - 2))
+        wrapped_task = _wrap_task_text(f"{marker}{checkbox} ", task.text, content_width - 2)
+        remaining_tasks = len(visible_tasks) - task_index - 1
+        remaining_rows = task_h - len(task_texts)
+        max_lines_for_task = max(1, remaining_rows - remaining_tasks)
+        task_texts.extend(wrapped_task[:max_lines_for_task])
     if not task_texts:
         task_texts = [truncate(line, content_width - 2) for line in task_panel_hint]
     while len(task_texts) < task_h:
@@ -168,9 +217,10 @@ def render_frame(
     rendered.extend(borders["v"] + text.ljust(content_width) + borders["v"] for text in task_texts[:task_h])
 
     rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
-    output_title = "Help: h/? | Run: r | Stop: s | Reload: l | New: n | Quit: q" if show_help else "Codex Output"
+    output_title = "Codex Output"
     rendered.append(borders["v"] + truncate(output_title, content_width).center(content_width) + borders["v"])
-    log_texts = [truncate(line, content_width - 2) for line in list(logs)[-log_h:]]
+    output_lines = list(logs)[:log_h] if show_help else list(logs)[-log_h:]
+    log_texts = [truncate(line, content_width - 2) for line in output_lines]
     while len(log_texts) < log_h:
         log_texts.insert(0, "")
     rendered.extend(borders["v"] + text.ljust(content_width) + borders["v"] for text in log_texts)
@@ -184,21 +234,29 @@ def render_frame(
 
     rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
     if status.message:
-        status_text = (
-            f"Status: {status.state:<8} | {status.message} | "
-            f"Last run: {status.last_run:<5} | Dur: {format_duration(status.duration_seconds):<6} | "
-            f"Errors: {status.errors:<3}"
+        status_line = (
+            f"Status: {status.state:<8} | Up: {format_duration(status.uptime_seconds)} | "
+            f"Dur: {format_duration(status.duration_seconds)} | Err: {status.errors} | {status.message}"
         )
     else:
-        status_text = (
-            f"Status: {status.state:<8} | Model: {status.model:<7} | "
-            f"Last run: {status.last_run:<5} | Up: {format_duration(status.uptime_seconds):<6} | "
-            f"Dur: {format_duration(status.duration_seconds):<6} | Errors: {status.errors:<3}"
+        status_line = (
+            f"Status: {status.state:<8} | Ready | Up: {format_duration(status.uptime_seconds)} | "
+            f"Dur: {format_duration(status.duration_seconds)} | Err: {status.errors}"
         )
-    rendered.append(
-        borders["v"]
-        + truncate(status_text, width - 2).ljust(width - 2)
-        + borders["v"]
+    runtime_line = (
+        f"(M)odel: {status.model} | (F)ast: {_on_off(status.fast_mode)} | "
+        f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)}"
     )
+    shortcuts_line = (
+        "Keys: (r)un CodexDeck | (s)top | (q)uit | re(l)oad | (n)ew | "
+        "\u2191\u2193 scroll | (h)elp | made by lyte"
+    )
+    rendered.append(borders["v"] + truncate(status_line, content_width).ljust(content_width) + borders["v"])
+    rendered.append(borders["v"] + truncate(runtime_line, content_width).ljust(content_width) + borders["v"])
+    rendered.append(borders["v"] + truncate(shortcuts_line, content_width).ljust(content_width) + borders["v"])
     rendered.append(borders["bl"] + borders["h"] * (width - 2) + borders["br"])
     return "\n".join(truncate(line, width) for line in rendered)
+
+
+def _on_off(value: bool) -> str:
+    return "on" if value else "off"

@@ -23,7 +23,12 @@ def test_build_command_supports_quoted_arguments_with_spaces(tmp_path: Path) -> 
 
 def test_build_command_accepts_config_object(tmp_path: Path) -> None:
     todo = _todo(tmp_path)
-    config = CockpitConfig(todo_path=todo, log_path=tmp_path / "agent.log", codex_cmd="codex {todo}")
+    config = CockpitConfig(
+        todo_path=todo,
+        log_path=tmp_path / "agent.log",
+        user_log_path=tmp_path / "user.log",
+        codex_cmd="codex {todo}",
+    )
 
     assert build_command(config) == ["codex", todo.resolve().as_posix()]
 

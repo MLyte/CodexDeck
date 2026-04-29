@@ -15,6 +15,7 @@ def test_python_m_entrypoint_prints_config(codexdeck_workspace) -> None:
         {
             "CODEX_TODO_PATH": str(codexdeck_workspace.todo_path),
             "CODEX_LOG_PATH": str(codexdeck_workspace.log_path),
+            "CODEX_USER_LOG_PATH": str(codexdeck_workspace.root / "logs" / "user.log"),
             "CODEX_CMD": "codex {todo}",
             "CODEX_MODEL": "normal",
         }
@@ -34,4 +35,5 @@ def test_python_m_entrypoint_prints_config(codexdeck_workspace) -> None:
     assert result.returncode == 0
     assert f"todo_path: {codexdeck_workspace.todo_path}" in result.stdout
     assert f"log_path: {codexdeck_workspace.log_path}" in result.stdout
+    assert f"user_log_path: {codexdeck_workspace.root / 'logs' / 'user.log'}" in result.stdout
     assert "codex_cmd: codex {todo}" in result.stdout

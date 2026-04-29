@@ -17,7 +17,9 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional, Protocol, TextIO
 
@@ -26,21 +28,13 @@ from codexdeck_runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessN
 from codexdeck_ui import RenderStatus, clamp_task_offset, format_duration, render_frame, truncate
 
 
-TODO_SKELETON = """# AI_TODO
-
-## First pass
-
-Replace this example with your first real task:
-
-    - [ ] Describe the first concrete action for Codex.
-"""
-
-
 class KeyReader:
     """Cross-platform non-blocking keyboard reader."""
 
     def __init__(self) -> None:
         self._is_windows = os.name == "nt"
+        self._pending_keys: list[str] = []
+        self._pending_posix = ""
         if self._is_windows:
             import msvcrt
 
@@ -55,8 +49,13 @@ class KeyReader:
             self._fd = sys.stdin.fileno()
             self._orig = self._termios.tcgetattr(self._fd)
             self._tty.setcbreak(self._fd)
+            attrs = self._termios.tcgetattr(self._fd)
+            attrs[0] &= ~self._termios.IXON
+            self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, attrs)
 
     def get_key(self) -> Optional[str]:
+        if self._pending_keys:
+            return self._pending_keys.pop(0)
         if self._is_windows:
             if not self._msvcrt.kbhit():
                 return None
@@ -79,16 +78,54 @@ class KeyReader:
             rlist, _, _ = select.select([sys.stdin], [], [], 0)
             if not rlist:
                 return None
-            ch = os.read(self._fd, 3)
+            ch = os.read(self._fd, 8)
             if not ch:
                 return None
-            decoded = ch.decode(errors="ignore")
-            return {
-                "\x1b[A": "UP",
-                "\x1b[B": "DOWN",
-                "\x1b[5": "PGUP",
-                "\x1b[6": "PGDN",
-            }.get(decoded, decoded)
+            keys, remainder = self._decode_posix_keys(self._pending_posix + ch.decode(errors="ignore"))
+            self._pending_posix = remainder
+            self._pending_keys.extend(keys)
+            if self._pending_keys:
+                return self._pending_keys.pop(0)
+            return None
+
+    @staticmethod
+    def _decode_posix_key(decoded: str) -> str:
+        keys, remainder = KeyReader._decode_posix_keys(decoded)
+        if keys:
+            return keys[0]
+        return remainder or decoded
+
+    @staticmethod
+    def _decode_posix_keys(decoded: str) -> tuple[list[str], str]:
+        keys: list[str] = []
+        index = 0
+        while index < len(decoded):
+            if decoded.startswith("\x1b[A", index):
+                keys.append("UP")
+                index += 3
+            elif decoded.startswith("\x1b[B", index):
+                keys.append("DOWN")
+                index += 3
+            elif decoded.startswith("\x1b[5~", index):
+                keys.append("PGUP")
+                index += 4
+            elif decoded.startswith("\x1b[6~", index):
+                keys.append("PGDN")
+                index += 4
+            elif decoded.startswith("\x1b[5", index) and index + 3 == len(decoded):
+                keys.append("PGUP")
+                index += 3
+            elif decoded.startswith("\x1b[6", index) and index + 3 == len(decoded):
+                keys.append("PGDN")
+                index += 3
+            elif decoded[index] == "\x1b":
+                if index == len(decoded) - 1 or decoded.startswith("\x1b[", index):
+                    return keys, decoded[index:]
+                index += 1
+            else:
+                keys.append(decoded[index])
+                index += 1
+        return keys, ""
 
     def close(self) -> None:
         if not self._is_windows:
@@ -112,6 +149,7 @@ class DefaultScreenWriter:
         is_windows: bool | None = None,
     ) -> None:
         self._cleared_once = False
+        self._entered_alternate_screen = False
         self._last_size: tuple[int, int] | None = None
         self._terminal_size = terminal_size or self._default_terminal_size
         self._stream = stream or sys.stdout
@@ -128,12 +166,21 @@ class DefaultScreenWriter:
             elif size_changed or not self._move_windows_cursor_home():
                 os.system("cls")
         else:
+            if not self._entered_alternate_screen:
+                self._stream.write("\033[?1049h")
+                self._entered_alternate_screen = True
             self._stream.write("\033[2J\033[H" if not self._cleared_once else "\033[H\033[J")
             self._cleared_once = True
 
         self._stream.write(content)
         self._stream.flush()
         self._last_size = current_size
+
+    def close(self) -> None:
+        if not self._is_windows and self._entered_alternate_screen:
+            self._stream.write("\033[?1049l")
+            self._stream.flush()
+            self._entered_alternate_screen = False
 
     @staticmethod
     def _default_terminal_size() -> tuple[int, int]:
@@ -166,16 +213,29 @@ class Cockpit:
     ) -> None:
         self.config = config
         self.todo_path = config.todo_path
+        self.user_log_path = config.user_log_path
         self.refresh_delay = 1.0 / max(1.0, config.refresh_hz)
         self.tasks: list[TodoTask] = []
         self._todo_mtime = None
         self.last_run = "never"
+        self.models = self._choices_with_current(config.models, config.model)
         self.model = config.model
+        self.fast_model = config.fast_model
+        self.fast_mode = False
+        self.permissions = self._choices_with_current(config.permissions, config.permission)
+        self.permission = config.permission
+        self.quit_confirmation = False
+        self.task_input_active = False
+        self.task_input_buffer = ""
+        self.auto_mode = False
+        self._last_auto_task_id = ""
         self.show_help = False
         self.task_offset = 0
         self.active_task_id: str | None = None
         self.active_task_label = ""
         self.last_task_label = ""
+        self._logged_terminal_run_ids: set[str] = set()
+        self._stop_thread: threading.Thread | None = None
         self.agent_label = self._agent_label(config.codex_cmd)
         self._key_reader_factory = key_reader_factory
         self._terminal_size = terminal_size or self._default_terminal_size
@@ -188,6 +248,15 @@ class Cockpit:
             stop_timeout=config.stop_timeout,
             run_timeout=config.run_timeout,
         )
+
+    @staticmethod
+    def _choices_with_current(choices: tuple[str, ...], current: str) -> tuple[str, ...]:
+        values = [current.strip()] if current.strip() else []
+        for choice in choices:
+            cleaned = choice.strip()
+            if cleaned and cleaned not in values:
+                values.append(cleaned)
+        return tuple(values)
 
     @staticmethod
     def _default_terminal_size() -> tuple[int, int]:
@@ -217,17 +286,25 @@ class Cockpit:
         try:
             task = self._next_open_task()
             if not self.todo_path.exists():
-                self.runner.log_buffer.append("> AI_TODO.md not found. Press n to create a starter file.")
+                self.runner.log_buffer.append("> AI_TODO.md not found. Press n to add the first task.")
                 return
             if task is None:
                 self.runner.log_buffer.append("> No open task. Add a '- [ ] ...' line, then press l.")
                 return
             self.active_task_id = task.id if task is not None else None
             self.active_task_label = self._task_label(task)
+            self._apply_effective_command()
             status = self.runner.start(self.todo_path)
             self.last_run = time.strftime("%H:%M:%S")
             self.runner.log_buffer.append(f"> Target task: {self.active_task_label}")
-            self.runner.log_buffer.append(f"> Run started. {self.agent_label} is processing AI_TODO.md.")
+            self.runner.log_buffer.append(
+                f"> Run started. {self.agent_label} is processing AI_TODO.md "
+                f"with model {self._effective_model()} and permission {self.permission}."
+            )
+            self._record_user_event(
+                f"run started | target={self.active_task_label} | model={self._effective_model()} | "
+                f"fast={self.fast_mode} | permission={self.permission} | run_id={getattr(status, 'run_id', '-')}"
+            )
         except ProcessAlreadyRunning:
             self.runner.log_buffer.append("> A run is already active.")
             return
@@ -240,12 +317,16 @@ class Cockpit:
 
     def _render(self, width: int, height: int) -> str:
         runner_status = self.runner.status()
+        logs = self._help_lines() if self.show_help else self._display_logs(self.runner.logs())
         return render_frame(
             tasks=self.tasks,
-            logs=self._display_logs(self.runner.logs()),
+            logs=logs,
             status=RenderStatus(
                 state=runner_status.state.value,
-                model=self.model,
+                model=self._effective_model(),
+                permission=self.permission,
+                fast_mode=self.fast_mode,
+                auto_mode=self.auto_mode,
                 last_run=self.last_run,
                 errors=runner_status.errors,
                 uptime_seconds=getattr(runner_status, "uptime_seconds", None),
@@ -269,10 +350,19 @@ class Cockpit:
         metrics = getattr(status, "metrics", None)
         runs_total = getattr(metrics, "runs_total", 0)
 
+        if status.state == RunnerState.STOPPING:
+            return f"Stopping {self.agent_label} on {self.active_task_label or self.last_task_label}."
         if running:
             return f"[{self._activity_spinner()}] {self.agent_label} is running on {self.active_task_label}."
+        if self.quit_confirmation:
+            return "Quit CodexDeck? Press y to confirm, n or Esc to cancel."
+        if self.task_input_active:
+            text = self.task_input_buffer or " "
+            return f"New task: {text} | Ctrl-S save, Esc cancel, Backspace edit."
+        if self.auto_mode:
+            return "Auto mode on. Successful runs continue with the next checked-off task."
         if not self.todo_path.exists():
-            return "AI_TODO.md not found. Press n to create a starter file."
+            return "AI_TODO.md not found. Press n to add the first task."
         if self._next_open_task() is None:
             if self.tasks:
                 return "All tasks are checked. Add an open task, then press l."
@@ -293,7 +383,7 @@ class Cockpit:
 
     @staticmethod
     def _status_running(status: RunStatus) -> bool:
-        return getattr(status, "running", status.state in {RunnerState.STARTING, RunnerState.RUNNING})
+        return getattr(status, "running", status.state in {RunnerState.STARTING, RunnerState.RUNNING, RunnerState.STOPPING})
 
     @staticmethod
     def _activity_spinner() -> str:
@@ -318,8 +408,33 @@ class Cockpit:
         return visible
 
     @staticmethod
+    def _help_lines() -> list[str]:
+        return [
+            "Help: CodexDeck keeps AI_TODO.md visible, runs one Codex process, and streams output.",
+            "(r)un first open task | (s)top active run | (q)uit with confirmation.",
+            "(n)ew task input: Ctrl-S saves, Esc cancels | re(l)oad refreshes AI_TODO.md.",
+            "(M)odel, (F)ast, (Pe)rm, Aut(o) adjust next run options | \u2191\u2193 scroll tasks.",
+            "made by lyte | GitHub: https://github.com/MLyte/CodexDeck",
+        ]
+
+    @staticmethod
     def _agent_label(command: str) -> str:
         return "Stub Codex (simulation)" if "codex_stub.py" in command else "Codex"
+
+    def _effective_model(self) -> str:
+        if self.fast_mode and self.fast_model:
+            return self.fast_model
+        return self.model
+
+    def _apply_effective_command(self) -> None:
+        command = self.config.codex_cmd
+        if any(placeholder in command for placeholder in ("{model}", "{permission}", "{fast}")):
+            command = (
+                command.replace("{model}", self._effective_model())
+                .replace("{permission}", self.permission)
+                .replace("{fast}", "1" if self.fast_mode else "0")
+            )
+        self.runner.command = command
 
     def _next_open_task(self) -> TodoTask | None:
         return next((task for task in self.tasks if not task.done), None)
@@ -352,8 +467,8 @@ class Cockpit:
             return [
                 "No AI_TODO.md",
                 "",
-                "n create a starter file",
-                "then edit the first task",
+                "n add the first task",
+                "Ctrl-S saves it",
                 "",
                 "r will start Codex after that",
             ]
@@ -366,18 +481,105 @@ class Cockpit:
             "l reload, r run",
         ]
 
-    def _create_todo_skeleton(self) -> None:
-        if self.todo_path.exists():
-            self.runner.log_buffer.append("> AI_TODO.md already exists. Add a '- [ ] ...' line, then press l.")
+    def _begin_task_input(self) -> None:
+        self.task_input_active = True
+        self.task_input_buffer = ""
+        self.quit_confirmation = False
+        self.runner.log_buffer.append("> New task input. Type the task, then press Ctrl-S to save or Esc to cancel.")
+
+    def _handle_task_input_key(self, key: str) -> None:
+        if key in {"\x1b", "ESC"}:
+            self.task_input_active = False
+            self.task_input_buffer = ""
+            self.runner.log_buffer.append("> New task cancelled.")
+            self._record_user_event("task input cancelled")
+            return
+        if key == "\x13":
+            self._save_task_input()
+            return
+        if key in {"\x7f", "\b"}:
+            self.task_input_buffer = self.task_input_buffer[:-1]
+            return
+        if key in {"\r", "\n", "\t"}:
+            return
+        if len(key) == 1 and key.isprintable():
+            self.task_input_buffer += key
+
+    def _save_task_input(self) -> None:
+        text = " ".join(self.task_input_buffer.split())
+        if not text:
+            self.runner.log_buffer.append("> New task is empty. Type a task or press Esc to cancel.")
             return
         try:
             self.todo_path.parent.mkdir(parents=True, exist_ok=True)
-            self.todo_path.write_text(TODO_SKELETON, encoding="utf-8")
+            prefix = ""
+            if self.todo_path.exists() and self.todo_path.stat().st_size > 0:
+                current = self.todo_path.read_text(encoding="utf-8", errors="replace")
+                prefix = "" if current.endswith("\n") else "\n"
+            elif not self.todo_path.exists():
+                self.todo_path.write_text("# AI_TODO\n\n", encoding="utf-8")
+            with self.todo_path.open("a", encoding="utf-8") as todo_file:
+                todo_file.write(f"{prefix}- [ ] {text}\n")
         except OSError as exc:
-            self.runner.log_buffer.append(f"[ERROR] cannot create AI_TODO.md: {exc}")
+            self.runner.log_buffer.append(f"[ERROR] cannot save task to AI_TODO.md: {exc}")
             return
-        self.load_todo_if_changed()
-        self.runner.log_buffer.append("> Starter AI_TODO.md created. Replace the first task with your goal.")
+        self.task_input_active = False
+        self.task_input_buffer = ""
+        self.load_todo_if_changed(force=True)
+        self.runner.log_buffer.append("> New task saved to AI_TODO.md.")
+        self._record_user_event(f"task added | text={text}")
+
+    def _cycle_model(self) -> None:
+        if not self.models:
+            self.runner.log_buffer.append("> No models configured.")
+            return
+        if self.fast_mode:
+            self.fast_mode = False
+        current_index = self.models.index(self.model) if self.model in self.models else -1
+        self.model = self.models[(current_index + 1) % len(self.models)]
+        self.runner.log_buffer.append(f"> Model selected for next run: {self.model}.")
+        self._record_user_event(f"model selected | model={self.model}")
+
+    def _toggle_fast_mode(self) -> None:
+        self.fast_mode = not self.fast_mode
+        state = "on" if self.fast_mode else "off"
+        self.runner.log_buffer.append(f"> Fast mode {state}. Next run model: {self._effective_model()}.")
+        self._record_user_event(f"fast mode {state} | model={self._effective_model()}")
+
+    def _cycle_permission(self) -> None:
+        if not self.permissions:
+            self.runner.log_buffer.append("> No Codex permissions configured.")
+            return
+        current_index = self.permissions.index(self.permission) if self.permission in self.permissions else -1
+        self.permission = self.permissions[(current_index + 1) % len(self.permissions)]
+        self.runner.log_buffer.append(f"> Codex permission for next run: {self.permission}.")
+        self._record_user_event(f"permission selected | permission={self.permission}")
+
+    def _record_user_event(self, event: str) -> None:
+        stamped = f"{datetime.now().isoformat(timespec='seconds')} {event}"
+        self.user_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.user_log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(stamped + "\n")
+
+    def _record_terminal_run_if_needed(self, status: RunStatus) -> None:
+        run_id = getattr(status, "run_id", None)
+        if not run_id or run_id in self._logged_terminal_run_ids or self._status_running(status):
+            return
+        returncode = getattr(status, "returncode", None)
+        duration = format_duration(getattr(status, "duration_seconds", None))
+        if getattr(status, "state", None) == RunnerState.ERROR:
+            outcome = f"failed | error={getattr(status, 'last_error', None) or returncode}"
+        elif returncode == 0:
+            outcome = "completed"
+        elif returncode is None:
+            outcome = "stopped"
+        else:
+            outcome = f"exited | code={returncode}"
+        self._record_user_event(
+            f"run {outcome} | target={self.last_task_label or self.active_task_label or '-'} | "
+            f"duration={duration} | run_id={run_id}"
+        )
+        self._logged_terminal_run_ids.add(run_id)
 
     def _summary_lines(self, status: RunStatus) -> list[str]:
         task = self._next_open_task()
@@ -389,20 +591,76 @@ class Cockpit:
 
         return [
             f"Target: {target}",
-            f"Tasks: {done_count} done | {pending_count} open | {total_count} total",
+            f"Tasks: {done_count} done | {pending_count} open | {total_count} total | Auto: {'on' if self.auto_mode else 'off'}",
             f"Last run: {self.last_run} | Duration: {duration} | Errors: {getattr(status, 'errors', 0)}",
         ]
 
-    def stop(self) -> None:
+    def _stop_is_active(self) -> bool:
+        return self._stop_thread is not None and self._stop_thread.is_alive()
+
+    def stop(self, *, block: bool = True) -> None:
+        if self._stop_is_active():
+            if block and self._stop_thread is not None:
+                self._stop_thread.join()
+            return
+
+        def stop_runner() -> None:
+            try:
+                self.runner.stop()
+            except ProcessNotRunning:
+                return
+            except Exception as exc:
+                self.runner.log_buffer.append(f"[ERROR] cannot stop Codex: {exc}")
+
         try:
-            self.runner.stop()
+            status = self.runner.status()
         except ProcessNotRunning:
             return
+        if not self._status_running(status):
+            return
+        if block:
+            stop_runner()
+            return
+        self.runner.log_buffer.append("> Stop requested.")
+        self._stop_thread = threading.Thread(target=stop_runner, name="codexdeck-stop", daemon=True)
+        self._stop_thread.start()
+
+    def _toggle_auto_mode(self) -> None:
+        self.auto_mode = not self.auto_mode
+        if self.auto_mode:
+            task = self._next_open_task()
+            self._last_auto_task_id = task.id if task is not None else ""
+        else:
+            self._last_auto_task_id = ""
+        state = "on" if self.auto_mode else "off"
+        self.runner.log_buffer.append(f"> Auto mode {state}.")
+        self._record_user_event(f"auto mode {state}")
+
+    def _maybe_start_next_auto_run(self, status: RunStatus) -> None:
+        if not self.auto_mode or self._status_running(status) or getattr(status, "returncode", None) != 0:
+            return
+        self.load_todo_if_changed(force=True)
+        next_task = self._next_open_task()
+        if next_task is None:
+            self.auto_mode = False
+            self._last_auto_task_id = ""
+            self.runner.log_buffer.append("> Auto mode off. No open tasks remain.")
+            self._record_user_event("auto mode off | reason=no open tasks")
+            return
+        if next_task.id == self._last_auto_task_id:
+            self.auto_mode = False
+            self.runner.log_buffer.append("> Auto mode paused. The previous task is still open.")
+            self._record_user_event("auto mode paused | reason=previous task still open")
+            return
+        self._last_auto_task_id = next_task.id
+        self.runner.log_buffer.append(f"> Auto mode starting next task: {self._task_label(next_task)}.")
+        self._record_user_event(f"auto next task | target={self._task_label(next_task)}")
+        self._start_codex()
 
     def loop(self) -> None:
         key_reader = self._key_reader_factory()
         self.load_todo_if_changed()
-        self.runner.log_buffer.append("> Ready. Press 'r' run, 's' stop, 'l' reload, 'n' new TODO, 'h/?' help, 'q' quit.")
+        self.runner.log_buffer.append("> Ready. Press h for help.")
         if self.agent_label != "Codex":
             self.runner.log_buffer.append(f"> Active mode: {self.agent_label}. No real Codex call will run.")
 
@@ -412,31 +670,53 @@ class Cockpit:
                 runner_status = self.runner.status()
                 key = key_reader.get_key()
                 if key:
-                    k = key.lower()
-                    if k == "q":
-                        break
-                    elif k == "r" and not self._status_running(runner_status):
-                        self._start_codex()
-                    elif k == "s" and self._status_running(runner_status):
-                        self.stop()
-                    elif k == "s":
-                        self.runner.log_buffer.append("> No active run to stop.")
-                    elif k == "l":
-                        self.load_todo_if_changed(force=True)
-                    elif k == "n":
-                        self._create_todo_skeleton()
-                    elif k in {"h", "?"}:
-                        self.show_help = not self.show_help
-                    elif k in {"j", "down"}:
-                        self._scroll_tasks(1)
-                    elif k in {"k", "up"}:
-                        self._scroll_tasks(-1)
-                    elif k == "pgdn":
-                        self._scroll_tasks(self._visible_task_count())
-                    elif k == "pgup":
-                        self._scroll_tasks(-self._visible_task_count())
+                    if self.task_input_active:
+                        self._handle_task_input_key(key)
                     else:
-                        self.runner.log_buffer.append(f"> Ignored key: {repr(key)}")
+                        k = key.lower()
+                        if self.quit_confirmation:
+                            if k == "y":
+                                break
+                            if k in {"n", "\x1b"}:
+                                self.quit_confirmation = False
+                                self.runner.log_buffer.append("> Quit cancelled.")
+                                self._record_user_event("quit cancelled")
+                            else:
+                                self.runner.log_buffer.append("> Quit pending. Press y to confirm, n or Esc to cancel.")
+                        elif k == "q":
+                            self.quit_confirmation = True
+                            self.runner.log_buffer.append("> Quit CodexDeck? Press y to confirm, n or Esc to cancel.")
+                        elif k == "r" and not self._status_running(runner_status):
+                            self._start_codex()
+                        elif k == "s" and self._status_running(runner_status):
+                            self.stop(block=False)
+                        elif k == "s":
+                            self.runner.log_buffer.append("> No active run to stop.")
+                        elif k == "l":
+                            self.load_todo_if_changed(force=True)
+                            self._record_user_event(f"TODO reloaded | tasks={len(self.tasks)}")
+                        elif k == "n":
+                            self._begin_task_input()
+                        elif k == "m":
+                            self._cycle_model()
+                        elif k == "f":
+                            self._toggle_fast_mode()
+                        elif k == "p":
+                            self._cycle_permission()
+                        elif k == "o":
+                            self._toggle_auto_mode()
+                        elif k in {"h", "?"}:
+                            self.show_help = not self.show_help
+                        elif k == "down":
+                            self._scroll_tasks(1)
+                        elif k == "up":
+                            self._scroll_tasks(-1)
+                        elif k == "pgdn":
+                            self._scroll_tasks(self._visible_task_count())
+                        elif k == "pgup":
+                            self._scroll_tasks(-self._visible_task_count())
+                        else:
+                            self.runner.log_buffer.append(f"> Ignored key: {repr(key)}")
                 width, height = self._terminal_size()
                 visible_tasks = self._visible_task_count_for_height(height)
                 self.task_offset = clamp_task_offset(len(self.tasks), visible_tasks, self.task_offset)
@@ -444,12 +724,16 @@ class Cockpit:
                 refreshed_status = self.runner.status()
                 if not self._status_running(refreshed_status) and self.active_task_label:
                     self.last_task_label = self.active_task_label
-                    self.active_task_id = None
                     self.active_task_label = ""
+                self._record_terminal_run_if_needed(refreshed_status)
+                self._maybe_start_next_auto_run(refreshed_status)
                 self._screen_writer(content)
                 self._sleeper(self.refresh_delay)
         finally:
             self.stop()
+            close_writer = getattr(self._screen_writer, "close", None)
+            if callable(close_writer):
+                close_writer()
             key_reader.close()
 
 
