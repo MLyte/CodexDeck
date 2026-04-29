@@ -19,6 +19,7 @@ class RenderStatus:
     model: str
     last_run: str
     errors: int
+    version: str = ""
     permission: str = "default"
     fast_mode: bool = False
     auto_mode: bool = False
@@ -115,6 +116,7 @@ def task_range_label(task_count: int, visible_count: int, offset: int) -> str:
 
 
 def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: bool) -> str:
+    version_text = f"v{status.version}" if status.version else "v0.0.0"
     width = max(1, width)
     height = max(1, height)
     lines = [
@@ -128,7 +130,7 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
             f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)}"
         ),
         f"Last run: {status.last_run}",
-        "Keys: (r)un CodexDeck | (s)top | (q)uit | (e)dit | re(l)oad | (n)ew | \u2191\u2193 scroll | (h)elp | made by lyte",
+        f"Keys: (r)un CodexDeck | (s)top | (q)uit | (e)dit | lo(g) | re(l)oad | (n)ew | \u2191\u2193 scroll | (h)elp | {version_text} | MIT",
     ]
     if status.message:
         lines.insert(2, status.message)
@@ -139,8 +141,8 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
                 "Help",
                 "CodexDeck keeps AI_TODO.md visible, runs one Codex process, and streams output.",
                 "Options: (M)odel, (F)ast, (Pe)rm, Aut(o)",
-                "Keys: (r)un, (s)top, (q)uit, (e)dit, re(l)oad, (n)ew, \u2191\u2193 scroll, (h)elp",
-                "made by lyte | https://github.com/MLyte/CodexDeck",
+                "Keys: (r)un, (s)top, (q)uit, (e)dit, lo(g), re(l)oad, (n)ew, \u2191\u2193 scroll, (h)elp",
+                f"made by lyte | {version_text} | MIT | https://github.com/MLyte/CodexDeck",
             ]
         )
     lines = lines[:height]
@@ -249,8 +251,8 @@ def render_frame(
         f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)}"
     )
     shortcuts_line = (
-        "Keys: (r)un CodexDeck | (s)top | (q)uit | (e)dit | re(l)oad | (n)ew | "
-        "\u2191\u2193 scroll | (h)elp | made by lyte"
+        f"Keys: (r)un CodexDeck | (s)top | (q)uit | (e)dit | lo(g) | re(l)oad | (n)ew | "
+        f"\u2191\u2193 scroll | (h)elp | v{status.version or '0.0.0'} | MIT"
     )
     rendered.append(borders["v"] + truncate(status_line, content_width).ljust(content_width) + borders["v"])
     rendered.append(borders["v"] + truncate(runtime_line, content_width).ljust(content_width) + borders["v"])

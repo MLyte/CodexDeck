@@ -65,10 +65,23 @@ def main() -> None:
         if "--print-config" in sys.argv[1:]:
             print_config()
             return
-        runpy.run_path(str(Path(__file__).with_name("agent-cockpit.py")), run_name="__main__")
+        script_path = _resolve_agent_cockpit_script()
+        runpy.run_path(str(script_path), run_name="__main__")
     except KeyboardInterrupt:
         print("\nCodexDeck stopped cleanly.")
         raise SystemExit(0)
+
+
+def _resolve_agent_cockpit_script() -> Path:
+    candidates = [
+        Path(__file__).with_name("agent-cockpit.py"),
+        Path(sys.argv[0]).resolve().with_name("agent-cockpit.py"),
+        Path.cwd() / "agent-cockpit.py",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError("Could not locate agent-cockpit.py")
 
 
 if __name__ == "__main__":

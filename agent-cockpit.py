@@ -28,6 +28,7 @@ from typing import Callable, Optional, Protocol, TextIO
 from codexdeck_core import CockpitConfig, ConfigError, TodoTask, parse_todo_file
 from codexdeck_runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessNotRunning, RunStatus, RunnerState
 from codexdeck_ui import RenderStatus, clamp_task_offset, format_duration, render_frame, truncate
+from codexdeck_version import resolve_version
 
 
 class KeyReader:
@@ -217,6 +218,7 @@ class Cockpit:
         self.config = config
         self.todo_path = config.todo_path
         self.user_log_path = config.user_log_path
+        self.run_summary_path = config.todo_path.parent / "CODEX_RUNS.md"
         self.refresh_delay = 1.0 / max(1.0, config.refresh_hz)
         self.tasks: list[TodoTask] = []
         self._todo_mtime = None
@@ -228,6 +230,7 @@ class Cockpit:
         self.permissions = self._choices_with_current(config.permissions, config.permission)
         self.permission = config.permission
         self.quit_confirmation = False
+        self.stop_confirmation = False
         self.task_input_active = False
         self.task_input_buffer = ""
         self.auto_mode = False
@@ -237,6 +240,10 @@ class Cockpit:
         self.active_task_id: str | None = None
         self.active_task_label = ""
         self.last_task_label = ""
+        self.active_run_model = ""
+        self.active_run_permission = ""
+        self.active_run_fast = False
+        self.app_version = resolve_version()
         self._logged_terminal_run_ids: set[str] = set()
         self._stop_thread: threading.Thread | None = None
         self.agent_label = self._agent_label(config.codex_cmd)
@@ -298,16 +305,20 @@ class Cockpit:
             self.active_task_id = task.id if task is not None else None
             self.active_task_label = self._task_label(task)
             self._apply_effective_command()
+            self.active_run_model = self._effective_model()
+            self.active_run_permission = self.permission
+            self.active_run_fast = self.fast_mode
             status = self.runner.start(self.todo_path)
             self.last_run = time.strftime("%H:%M:%S")
             self.runner.log_buffer.append(f"> Target task: {self.active_task_label}")
             self.runner.log_buffer.append(
                 f"> Run started. {self.agent_label} is processing AI_TODO.md "
-                f"with model {self._effective_model()} and permission {self.permission}."
+                f"with model {self.active_run_model} and permission {self.active_run_permission}."
             )
             self._record_user_event(
-                f"run started | target={self.active_task_label} | model={self._effective_model()} | "
-                f"fast={self.fast_mode} | permission={self.permission} | run_id={getattr(status, 'run_id', '-')}"
+                f"run started | target={self.active_task_label} | model={self.active_run_model} | "
+                f"fast={self.active_run_fast} | permission={self.active_run_permission} | "
+                f"run_id={getattr(status, 'run_id', '-')}"
             )
         except ProcessAlreadyRunning:
             self.runner.log_buffer.append("> A run is already active.")
@@ -331,6 +342,7 @@ class Cockpit:
                 permission=self.permission,
                 fast_mode=self.fast_mode,
                 auto_mode=self.auto_mode,
+                version=self.app_version,
                 last_run=self.last_run,
                 errors=runner_status.errors,
                 uptime_seconds=getattr(runner_status, "uptime_seconds", None),
@@ -356,10 +368,12 @@ class Cockpit:
 
         if status.state == RunnerState.STOPPING:
             return f"Stopping {self.agent_label} on {self.active_task_label or self.last_task_label}."
-        if running:
-            return f"[{self._activity_spinner()}] {self.agent_label} is running on {self.active_task_label}."
+        if self.stop_confirmation:
+            return f"Stop {self.agent_label}? Press y to confirm, n or Esc to cancel."
         if self.quit_confirmation:
             return "Quit CodexDeck? Press y to confirm, n or Esc to cancel."
+        if running:
+            return f"[{self._activity_spinner()}] {self.agent_label} is running on {self.active_task_label}."
         if self.task_input_active:
             text = self.task_input_buffer or " "
             return f"New task: {text} | Ctrl-S save, Esc cancel, Backspace edit."
@@ -415,9 +429,9 @@ class Cockpit:
     def _help_lines() -> list[str]:
         return [
             "Help: CodexDeck keeps AI_TODO.md visible, runs one Codex process, and streams output.",
-            "(r)un first open task | (s)top active run | (q)uit with confirmation.",
-            "(e)dit opens AI_TODO.md in nano | (n)ew: Ctrl-S saves, Esc cancels | re(l)oad.",
-            "(M)odel, (F)ast, (Pe)rm, Aut(o) adjust next run options | \u2191\u2193 scroll tasks.",
+            "(r)un first open task | (s)top active run with confirmation | (q)uit with confirmation.",
+            "(e)dit opens AI_TODO.md | lo(g) opens CODEX_RUNS.md | (n)ew: Ctrl-S saves, Esc cancels.",
+            "re(l)oad TODO | (M)odel, (F)ast, (Pe)rm, Aut(o) options | \u2191\u2193 scroll tasks.",
             "made by lyte | GitHub: https://github.com/MLyte/CodexDeck",
         ]
 
@@ -489,6 +503,7 @@ class Cockpit:
         self.task_input_active = True
         self.task_input_buffer = ""
         self.quit_confirmation = False
+        self.stop_confirmation = False
         self.runner.log_buffer.append("> New task input. Type the task, then press Ctrl-S to save or Esc to cancel.")
 
     def _handle_task_input_key(self, key: str) -> None:
@@ -550,7 +565,21 @@ class Cockpit:
             return key_reader
 
         self.runner.log_buffer.append("> Opening AI_TODO.md in nano. Save or cancel there to return to CodexDeck.")
-        self._record_user_event(f"editor opened | path={self.todo_path}")
+        key_reader = self._open_markdown_file(key_reader, self.todo_path, label="AI_TODO.md")
+        self.load_todo_if_changed(force=True)
+        return key_reader
+
+    def _open_run_summary(self, key_reader: KeyReaderLike) -> KeyReaderLike:
+        try:
+            self._ensure_run_summary_file()
+        except OSError as exc:
+            self.runner.log_buffer.append(f"[ERROR] cannot prepare CODEX_RUNS.md: {exc}")
+            return key_reader
+        self.runner.log_buffer.append("> Opening CODEX_RUNS.md in nano. Save or cancel there to return to CodexDeck.")
+        return self._open_markdown_file(key_reader, self.run_summary_path, label="CODEX_RUNS.md")
+
+    def _open_markdown_file(self, key_reader: KeyReaderLike, path: Path, *, label: str) -> KeyReaderLike:
+        self._record_user_event(f"editor opened | path={path}")
 
         close_writer = getattr(self._screen_writer, "close", None)
         if callable(close_writer):
@@ -558,23 +587,58 @@ class Cockpit:
         key_reader.close()
 
         try:
-            returncode = self._editor_runner(self.todo_path)
+            returncode = self._editor_runner(path)
         except OSError as exc:
             self.runner.log_buffer.append(f"[ERROR] cannot open nano: {exc}")
-            self._record_user_event(f"editor failed | error={exc}")
+            self._record_user_event(f"editor failed | path={path} | error={exc}")
         else:
             if returncode == 0:
-                self.runner.log_buffer.append("> Back from nano. AI_TODO.md reloaded.")
-                self._record_user_event(f"editor closed | path={self.todo_path} | returncode=0")
+                self.runner.log_buffer.append(f"> Back from nano. {label} closed.")
+                self._record_user_event(f"editor closed | path={path} | returncode=0")
             else:
-                self.runner.log_buffer.append(f"> Back from nano. Editor exited with code {returncode}. AI_TODO.md reloaded.")
-                self._record_user_event(f"editor closed | path={self.todo_path} | returncode={returncode}")
+                self.runner.log_buffer.append(f"> Back from nano. {label} editor exited with code {returncode}.")
+                self._record_user_event(f"editor closed | path={path} | returncode={returncode}")
 
         self.task_input_active = False
         self.task_input_buffer = ""
         self.quit_confirmation = False
-        self.load_todo_if_changed(force=True)
+        self.stop_confirmation = False
         return self._key_reader_factory()
+
+    def _ensure_run_summary_file(self) -> None:
+        self.run_summary_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.run_summary_path.exists():
+            return
+        self.run_summary_path.write_text(
+            "# Codex Run Log\n\n"
+            "This file is maintained by CodexDeck.\n\n"
+            "Each completed Codex launch appends a short Markdown summary with the target\n"
+            "task, outcome, duration, model, permission, and run id.\n",
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _clean_summary_value(value: object) -> str:
+        text = str(value or "-").replace("\n", " ").strip()
+        return text or "-"
+
+    def _append_run_summary(self, *, status: RunStatus, outcome: str, duration: str) -> None:
+        self._ensure_run_summary_file()
+        run_id = self._clean_summary_value(getattr(status, "run_id", None))
+        target = self._clean_summary_value(self.last_task_label or self.active_task_label or "-")
+        timestamp = datetime.now().isoformat(timespec="seconds")
+        entry = (
+            f"\n\n## {timestamp} - {outcome}\n\n"
+            f"- Task: {target}\n"
+            f"- Result: {outcome}\n"
+            f"- Duration: {duration}\n"
+            f"- Model: {self.active_run_model or self._effective_model()}\n"
+            f"- Permission: {self.active_run_permission or self.permission}\n"
+            f"- Fast mode: {'on' if self.active_run_fast else 'off'}\n"
+            f"- Run id: {run_id}\n"
+        )
+        with self.run_summary_path.open("a", encoding="utf-8") as summary_file:
+            summary_file.write(entry)
 
     def _cycle_model(self) -> None:
         if not self.models:
@@ -626,6 +690,10 @@ class Cockpit:
             f"run {outcome} | target={self.last_task_label or self.active_task_label or '-'} | "
             f"duration={duration} | run_id={run_id}"
         )
+        try:
+            self._append_run_summary(status=status, outcome=outcome, duration=duration)
+        except OSError as exc:
+            self.runner.log_buffer.append(f"[ERROR] cannot update CODEX_RUNS.md: {exc}")
         self._logged_terminal_run_ids.add(run_id)
 
     def _summary_lines(self, status: RunStatus) -> list[str]:
@@ -721,7 +789,20 @@ class Cockpit:
                         self._handle_task_input_key(key)
                     else:
                         k = key.lower()
-                        if self.quit_confirmation:
+                        if self.stop_confirmation:
+                            if not self._status_running(runner_status):
+                                self.stop_confirmation = False
+                                self.runner.log_buffer.append("> Stop cancelled. No active run.")
+                            elif k == "y":
+                                self.stop_confirmation = False
+                                self.stop(block=False)
+                            elif k in {"n", "\x1b"}:
+                                self.stop_confirmation = False
+                                self.runner.log_buffer.append("> Stop cancelled.")
+                                self._record_user_event("stop cancelled")
+                            else:
+                                self.runner.log_buffer.append("> Stop pending. Press y to confirm, n or Esc to cancel.")
+                        elif self.quit_confirmation:
                             if k == "y":
                                 break
                             if k in {"n", "\x1b"}:
@@ -732,11 +813,14 @@ class Cockpit:
                                 self.runner.log_buffer.append("> Quit pending. Press y to confirm, n or Esc to cancel.")
                         elif k == "q":
                             self.quit_confirmation = True
+                            self.stop_confirmation = False
                             self.runner.log_buffer.append("> Quit CodexDeck? Press y to confirm, n or Esc to cancel.")
                         elif k == "r" and not self._status_running(runner_status):
                             self._start_codex()
                         elif k == "s" and self._status_running(runner_status):
-                            self.stop(block=False)
+                            self.stop_confirmation = True
+                            self.quit_confirmation = False
+                            self.runner.log_buffer.append(f"> Stop {self.agent_label}? Press y to confirm, n or Esc to cancel.")
                         elif k == "s":
                             self.runner.log_buffer.append("> No active run to stop.")
                         elif k == "l":
@@ -748,6 +832,10 @@ class Cockpit:
                             key_reader = self._open_todo_editor(key_reader)
                         elif k == "e":
                             self.runner.log_buffer.append("> Stop the active Codex run before editing AI_TODO.md in nano.")
+                        elif k == "g" and not self._status_running(runner_status):
+                            key_reader = self._open_run_summary(key_reader)
+                        elif k == "g":
+                            self.runner.log_buffer.append("> Stop the active Codex run before opening CODEX_RUNS.md.")
                         elif k == "m":
                             self._cycle_model()
                         elif k == "f":

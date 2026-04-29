@@ -259,7 +259,7 @@ def test_render_footer_lists_shortcuts_by_importance() -> None:
     frame = render_frame(
         tasks=[Task("task")],
         logs=[],
-        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0, version="1.2.3"),
         width=140,
         height=24,
     )
@@ -282,8 +282,10 @@ def test_render_footer_lists_shortcuts_by_importance() -> None:
     assert shortcuts_line.index("(r)un CodexDeck") < shortcuts_line.index("(s)top")
     assert shortcuts_line.index("(s)top") < shortcuts_line.index("(q)uit")
     assert shortcuts_line.index("(q)uit") < shortcuts_line.index("(e)dit")
-    assert shortcuts_line.index("(e)dit") < shortcuts_line.index("re(l)oad")
+    assert shortcuts_line.index("(e)dit") < shortcuts_line.index("lo(g)")
+    assert shortcuts_line.index("lo(g)") < shortcuts_line.index("re(l)oad")
     assert "(e)dit" in shortcuts_line
+    assert "lo(g)" in shortcuts_line
     assert "re(l)oad" in shortcuts_line
     assert "(n)ew" in shortcuts_line
     assert "(a)dd" not in shortcuts_line
@@ -294,7 +296,8 @@ def test_render_footer_lists_shortcuts_by_importance() -> None:
     assert "\u2191\u2193 scroll" in shortcuts_line
     assert "(j/k)" not in shortcuts_line
     assert "(h)elp" in shortcuts_line
-    assert shortcuts_line.index("(h)elp") < shortcuts_line.index("made by lyte")
+    assert shortcuts_line.index("(h)elp") < shortcuts_line.index("v1.2.3")
+    assert "MIT" in shortcuts_line
 
 
 def test_render_uses_compact_mode_for_small_terminal() -> None:
@@ -335,7 +338,7 @@ def test_render_full_help_uses_output_panel() -> None:
             "What is this app doing? CodexDeck keeps AI_TODO.md visible.",
             "made by lyte | GitHub: https://github.com/MLyte/CodexDeck",
         ],
-        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0, version="1.2.3"),
         width=120,
         height=24,
         show_help=True,

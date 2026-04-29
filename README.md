@@ -27,7 +27,7 @@ the controls needed to guide one local Codex run without leaving the terminal.
 +--------------------------------------------------------------------------+
 | Status: RUNNING | Up: 12s | Dur: - | Err: 0 | [|] Codex is running ...  |
 | (M)odel: gpt-5.5 | (F)ast: off | (Pe)rm: default | Aut(o): off       |
-| Keys: (r)un CodexDeck | (s)top | (q)uit | (e)dit | (n)ew | ...       |
+| Keys: (r)un CodexDeck | (s)top | (q)uit | (e)dit | lo(g) | v0.0.0 | MIT |
 +--------------------------------------------------------------------------+
 ```
 
@@ -77,6 +77,8 @@ CodexDeck does not mark tasks done itself. The Codex run must update
 - Keeps live logs in memory.
 - Writes process logs to `logs/agent.log`.
 - Writes user-facing events to `logs/user.log`.
+- Appends a readable Markdown summary of completed runs to `CODEX_RUNS.md`.
+- Shows the current app version and `MIT` in the footer.
 - Sanitizes sensitive-looking log fragments.
 - Decodes batched POSIX arrow keys so repeated scrolling does not flood logs
   with ignored escape fragments.
@@ -89,9 +91,10 @@ CodexDeck does not mark tasks done itself. The Codex run must update
 The footer keeps the main shortcuts visible in one mnemonic line.
 
 - `(r)un CodexDeck`: start the current run.
-- `(s)top`: stop the active run.
+- `(s)top`: ask for confirmation, then stop the active run.
 - `(q)uit`: ask for quit confirmation.
 - `(e)dit`: open `AI_TODO.md` in `nano`, then return to CodexDeck.
+- `lo(g)`: open `CODEX_RUNS.md`, the Markdown summary of completed Codex runs.
 - `re(l)oad`: reload `AI_TODO.md`.
 - `(n)ew`: type a new task, then press `Ctrl-S` to save.
 - `(m)odel`: cycle configured model labels.
@@ -124,7 +127,7 @@ Main settings:
 - `CODEX_LOG_PATH` or `LOG_PATH`: process log path. Default: `logs/agent.log`.
 - `CODEX_USER_LOG_PATH` or `USER_LOG_PATH`: user event log path. Default: `logs/user.log`.
 - `CODEX_CONFIG_PATH`: alternate config file path.
-- `CODEXDECK_EDITOR`: terminal editor command used by `e`. Default: `nano`.
+- `CODEXDECK_EDITOR`: terminal editor command used by `e` and `g`. Default: `nano`.
 - `CODEX_ASCII_BORDERS=1`: force ASCII borders.
 
 Supported command placeholders:
@@ -154,6 +157,13 @@ Requirement: Python 3.9+.
 ```bash
 python3 -m pip install -r requirements.txt
 python3 -m codexdeck
+```
+
+Install with `pipx`:
+
+```bash
+pipx install .
+pipx install git+https://github.com/MLyte/CodexDeck.git
 ```
 
 Print resolved configuration:
@@ -241,7 +251,7 @@ le terminal.
 
 - Lance Codex avec `r`.
 - Empêche les runs concurrents.
-- Stoppe le run actif avec `s`.
+- Demande confirmation puis stoppe le run actif avec `s`.
 - Affiche la sortie Codex en direct.
 - Suit l'état, l'uptime, la durée et les erreurs.
 - Utilise un écran terminal alternatif pour renforcer l'effet application.
@@ -272,6 +282,8 @@ CodexDeck ne coche pas les tâches lui-même. Le run Codex doit modifier
 - Logs live en mémoire.
 - Logs process persistés dans `logs/agent.log`.
 - Événements utilisateur persistés dans `logs/user.log`.
+- Synthèse Markdown lisible des runs terminés dans `CODEX_RUNS.md`.
+- Affiche la version courante de l'app et `MIT` dans le footer.
 - Nettoyage des fragments de logs qui ressemblent à des secrets.
 - Décodage propre des flèches répétées pour éviter les fragments d'échappement
   dans les logs.
@@ -284,9 +296,10 @@ CodexDeck ne coche pas les tâches lui-même. Le run Codex doit modifier
 Le footer garde les raccourcis principaux visibles sur une seule ligne.
 
 - `(r)un CodexDeck` : lancer CodexDeck.
-- `(s)top` : stopper le run actif.
+- `(s)top` : demander confirmation puis stopper le run actif.
 - `(q)uit` : demander confirmation avant de quitter.
 - `(e)dit` : ouvrir `AI_TODO.md` dans `nano`, puis revenir à CodexDeck.
+- `lo(g)` : ouvrir `CODEX_RUNS.md`, la synthèse Markdown des runs Codex terminés.
 - `re(l)oad` : recharger `AI_TODO.md`.
 - `(n)ew` : taper une nouvelle tâche, puis `Ctrl-S` pour sauvegarder.
 - `(m)odel` : changer de modèle.
@@ -314,7 +327,7 @@ Paramètres principaux :
 - `CODEX_TODO_PATH` ou `TODO_PATH` : chemin du TODO.
 - `CODEX_LOG_PATH` ou `LOG_PATH` : chemin des logs process.
 - `CODEX_USER_LOG_PATH` ou `USER_LOG_PATH` : chemin des événements utilisateur.
-- `CODEXDECK_EDITOR` : commande d'éditeur terminal utilisée par `e`. Défaut : `nano`.
+- `CODEXDECK_EDITOR` : commande d'éditeur terminal utilisée par `e` et `g`. Défaut : `nano`.
 - `CODEX_ASCII_BORDERS=1` : forcer les bordures ASCII.
 
 Placeholders supportés dans `CODEX_CMD` :
@@ -332,6 +345,13 @@ directement par le modèle.
 ```bash
 python3 -m pip install -r requirements.txt
 python3 -m codexdeck
+```
+
+Installation avec `pipx` :
+
+```bash
+pipx install .
+pipx install git+https://github.com/MLyte/CodexDeck.git
 ```
 
 Afficher la configuration résolue :

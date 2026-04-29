@@ -158,6 +158,7 @@ class StopReleaseKeyReader(FakeKeyReader):
     def __init__(self, runner: BlockingStopRunner) -> None:
         super().__init__(["r", "s"])
         self.runner = runner
+        self.stop_confirmed = False
         self.quit_sent = False
         self.confirm_sent = False
 
@@ -165,6 +166,9 @@ class StopReleaseKeyReader(FakeKeyReader):
         key = super().get_key()
         if key is not None:
             return key
+        if not self.stop_confirmed:
+            self.stop_confirmed = True
+            return "y"
         if self.runner.stop_started.is_set() and not self.quit_sent:
             self.quit_sent = True
             return "q"
@@ -247,7 +251,7 @@ def test_posix_key_reader_decodes_batched_arrow_sequences() -> None:
 def test_loop_uses_fake_key_reader_without_blocking(tmp_path: Path) -> None:
     module = load_cockpit_module()
     runner = FakeRunner()
-    key_reader = FakeKeyReader(["r", "s", "x", "h", "?", "l", "q", "y"])
+    key_reader = FakeKeyReader(["r", "s", "y", "x", "h", "?", "l", "q", "y"])
     frames: list[str] = []
     sleeps: list[float] = []
     cockpit = module.Cockpit(
@@ -290,9 +294,11 @@ def test_stop_key_does_not_block_tui_while_runner_is_stopping(tmp_path: Path) ->
 
     assert runner.started == 1
     assert runner.stopped == 1
+    assert key_reader.stop_confirmed is True
     assert key_reader.quit_sent is True
     assert key_reader.confirm_sent is True
     assert key_reader.closed is True
+    assert any("Stop Codex? Press y to confirm" in frame for frame in frames)
     assert any("Stop requested." in frame for frame in frames)
 
 
@@ -326,11 +332,13 @@ def test_sleep_stub_stops_from_tui_without_freezing(tmp_path: Path) -> None:
             if not self.stop_sent and any("stub sleeping" in line for line in logs):
                 self.stop_sent = True
                 return "s"
+            if self.stop_sent and not self.confirm_sent:
+                self.confirm_sent = True
+                return "y"
             if self.stop_sent and not self.quit_sent and not cockpit._status_running(runner.status()):
                 self.quit_sent = True
                 return "q"
-            if self.quit_sent and not self.confirm_sent:
-                self.confirm_sent = True
+            if self.quit_sent:
                 return "y"
             return None
 
@@ -357,6 +365,29 @@ def test_sleep_stub_stops_from_tui_without_freezing(tmp_path: Path) -> None:
     assert len(frames) >= 3
     assert any("Stop requested." in line for line in runner.logs())
     assert any("stopped rc=" in line for line in runner.logs())
+
+
+def test_stop_confirmation_can_be_cancelled(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    runner = FakeRunner()
+    key_reader = FakeKeyReader(["r", "s", "n", "q", "y"])
+    frames: list[str] = []
+    cockpit = module.Cockpit(
+        make_config(tmp_path),
+        key_reader_factory=lambda: key_reader,
+        terminal_size=lambda: (120, 24),
+        sleeper=lambda _delay: None,
+        screen_writer=frames.append,
+        runner=runner,
+    )
+
+    cockpit.loop()
+
+    assert runner.started == 1
+    assert runner.stopped == 1
+    assert any("Stop Codex? Press y to confirm" in frame for frame in frames)
+    assert any("Stop cancelled." in line for line in runner.log_buffer.lines)
+    assert "stop cancelled" in cockpit.config.user_log_path.read_text(encoding="utf-8")
 
 
 def test_loop_reload_key_refreshes_visible_tasks_and_summary(tmp_path: Path) -> None:
@@ -426,11 +457,47 @@ def test_edit_key_opens_todo_in_terminal_editor_and_reloads(tmp_path: Path) -> N
     assert first_reader.closed is True
     assert second_reader.closed is True
     assert screen_writer.closed >= 1
-    assert any("Back from nano. AI_TODO.md reloaded." in line for line in runner.log_buffer.lines)
+    assert any("Back from nano. AI_TODO.md closed." in line for line in runner.log_buffer.lines)
     assert any(" [x] old task" in frame and " [ ] edited in nano" in frame for frame in screen_writer.frames)
     user_log = config.user_log_path.read_text(encoding="utf-8")
     assert "editor opened" in user_log
     assert "editor closed" in user_log
+
+
+def test_log_key_opens_run_summary_markdown(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    config = make_config(tmp_path)
+    runner = FakeRunner()
+    first_reader = FakeKeyReader(["g"])
+    second_reader = FakeKeyReader(["q", "y"])
+    readers = [first_reader, second_reader]
+    opened_paths: list[Path] = []
+
+    def key_reader_factory() -> FakeKeyReader:
+        assert readers
+        return readers.pop(0)
+
+    def editor_runner(path: Path) -> int:
+        opened_paths.append(path)
+        return 0
+
+    cockpit = module.Cockpit(
+        config,
+        key_reader_factory=key_reader_factory,
+        terminal_size=lambda: (120, 24),
+        sleeper=lambda _delay: None,
+        screen_writer=lambda _frame: None,
+        runner=runner,
+        editor_runner=editor_runner,
+    )
+
+    cockpit.loop()
+
+    assert opened_paths == [tmp_path / "CODEX_RUNS.md"]
+    assert (tmp_path / "CODEX_RUNS.md").read_text(encoding="utf-8").startswith("# Codex Run Log")
+    assert any("Opening CODEX_RUNS.md in nano" in line for line in runner.log_buffer.lines)
+    assert first_reader.closed is True
+    assert second_reader.closed is True
 
 
 def test_quit_requires_confirmation_and_can_be_cancelled(tmp_path: Path) -> None:
@@ -714,6 +781,11 @@ def test_short_stub_output_keeps_active_marker_on_first_open_task(tmp_path: Path
     user_log = config.user_log_path.read_text(encoding="utf-8")
     assert "run started | target=line 2: first open task" in user_log
     assert "run completed | target=line 2: first open task" in user_log
+    run_summary = (config.todo_path.parent / "CODEX_RUNS.md").read_text(encoding="utf-8")
+    assert "## " in run_summary
+    assert "- Task: line 2: first open task" in run_summary
+    assert "- Result: completed" in run_summary
+    assert "- Model: gpt-5.5" in run_summary
 
 
 def test_loop_guides_missing_todo_and_saves_first_typed_task(tmp_path: Path) -> None:
