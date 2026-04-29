@@ -5,17 +5,37 @@ CodexDeck is a local terminal cockpit for running one Codex process against an
 
 It is not an autonomous backlog manager yet. Today it reads the TODO file,
 shows the open tasks, starts/stops a single Codex command, streams output, and
-writes logs. CodexDeck does not mark tasks done, edit `AI_TODO.md`, generate a
-run summary, or manage multiple agents.
+writes logs. CodexDeck does not mark tasks done, edit `AI_TODO.md`, or manage
+multiple agents.
+
+```text
++--------------------------------------------------------------------------+
+|                              AI_TODO.md 1-2/2                            |
+| >[ ] First task to run                                                   |
+|  [ ] Next task                                                           |
++--------------------------------------------------------------------------+
+|                              Codex Output                                |
+| Run started. Codex is processing AI_TODO.md.                             |
+| Codex output: Reading files...                                           |
++--------------------------------------------------------------------------+
+|                              Task Summary                                |
+| Target: line 1: First task to run                                        |
+| Tasks: 0 done | 2 open | 2 total                                         |
+| Last run: 21:42:10 | Duration: 12s | Errors: 0                           |
++--------------------------------------------------------------------------+
+| Status: RUNNING | [|] Codex is running on line 1: First task to run ...   |
++--------------------------------------------------------------------------+
+```
 
 ## Current State
 
 What works now:
 
-- TUI with two panes: `AI_TODO.md` tasks on the left, Codex output on the right.
+- Horizontal TUI sections: `AI_TODO.md` on top, Codex output in the middle, task summary at the bottom.
 - Bottom status bar with state, model, last run, uptime/duration, errors, and a short activity message.
 - Compact mode when the terminal is smaller than 80 columns or 20 rows.
 - First unchecked task is highlighted as the current target when a run starts.
+- Task summary shows the current or last target, done/open/total counts, last run time, duration, and errors.
 - Missing TODO file guidance, with `n` to create a starter `AI_TODO.md`.
 - Manual and automatic TODO reload based on file modification time.
 - One child process at a time, with start/stop/run-timeout handling.
@@ -26,7 +46,7 @@ Current stance:
 
 - README and user-facing TUI copy should stay English-only.
 - `AI_TODO.md` is still the project backlog and may contain older implementation notes.
-- The current layout is vertical split left/right. Horizontal layouts and run summaries are not implemented.
+- The current layout is horizontal. There is a compact task summary, but no detailed per-run report yet.
 
 ## Quick Start
 
@@ -187,7 +207,7 @@ Then press `r`, wait for completion, and press `q`.
 ## Known Limitations
 
 - No AI_TODO execution flow beyond selecting the first unchecked task and passing the file to Codex.
-- No automatic task completion, TODO file editing, checkpointing, or run summary.
+- No automatic task completion, TODO file editing, checkpointing, or detailed run report.
 - No multi-agent or parallel run support.
 - No log search, replay, or rotation.
 - No visual diff when `AI_TODO.md` changes.

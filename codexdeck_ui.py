@@ -130,6 +130,7 @@ def render_frame(
     task_offset: int = 0,
     active_task_id: str | None = None,
     task_panel_hint: Iterable[str] = (),
+    summary_lines: Iterable[str] = (),
 ) -> str:
     if width < 80 or height < 20:
         return _compact_frame(status=status, width=width, height=height, show_help=show_help)
@@ -137,62 +138,51 @@ def render_frame(
     width = max(40, width)
     height = max(8, height)
     borders = ASCII_BORDERS if ascii_borders else UNICODE_BORDERS
-    left_width = max(24, min(round(width * 0.60), width - 32))
-    right_width = width - left_width - 3
-    body_h = max(2, height - 5)
+    content_width = width - 2
+    available_h = max(6, height - 9)
+    task_h = max(3, min(8, available_h // 3 + 1))
+    summary_h = min(3, max(2, available_h - task_h - 2))
+    log_h = max(2, available_h - task_h - summary_h)
 
     rendered: list[str] = []
-    rendered.append(
-        borders["tl"]
-        + borders["h"] * left_width
-        + borders["tm"]
-        + borders["h"] * right_width
-        + borders["tr"]
-    )
+    rendered.append(borders["tl"] + borders["h"] * content_width + borders["tr"])
     task_list = list(tasks)
-    task_offset = clamp_task_offset(len(task_list), body_h, task_offset)
+    task_offset = clamp_task_offset(len(task_list), task_h, task_offset)
 
     rendered.append(
         borders["v"]
-        + truncate(task_range_label(len(task_list), body_h, task_offset), left_width).center(left_width)
-        + borders["v"]
-        + truncate(
-            "Help: h/? | Run: r | Stop: s | Reload: l | New: n | Quit: q" if show_help else "Codex Output",
-            right_width,
-        ).center(right_width)
+        + truncate(task_range_label(len(task_list), task_h, task_offset), content_width).center(content_width)
         + borders["v"]
     )
 
-    visible_tasks = task_list[task_offset : task_offset + body_h]
+    visible_tasks = task_list[task_offset : task_offset + task_h]
     task_texts = []
     for task in visible_tasks:
         marker = ">" if active_task_id is not None and getattr(task, "id", None) == active_task_id else " "
         checkbox = "[x]" if task.done else "[ ]"
-        task_texts.append(truncate(f"{marker}{checkbox} {task.text}", left_width - 2))
+        task_texts.append(truncate(f"{marker}{checkbox} {task.text}", content_width - 2))
     if not task_texts:
-        task_texts = [truncate(line, left_width - 2) for line in task_panel_hint]
-    log_texts = [truncate(line, right_width - 2) for line in list(logs)[-body_h:]]
-    while len(task_texts) < body_h:
+        task_texts = [truncate(line, content_width - 2) for line in task_panel_hint]
+    while len(task_texts) < task_h:
         task_texts.append("")
-    while len(log_texts) < body_h:
+    rendered.extend(borders["v"] + text.ljust(content_width) + borders["v"] for text in task_texts[:task_h])
+
+    rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
+    output_title = "Help: h/? | Run: r | Stop: s | Reload: l | New: n | Quit: q" if show_help else "Codex Output"
+    rendered.append(borders["v"] + truncate(output_title, content_width).center(content_width) + borders["v"])
+    log_texts = [truncate(line, content_width - 2) for line in list(logs)[-log_h:]]
+    while len(log_texts) < log_h:
         log_texts.insert(0, "")
+    rendered.extend(borders["v"] + text.ljust(content_width) + borders["v"] for text in log_texts)
 
-    for index in range(body_h):
-        rendered.append(
-            borders["v"]
-            + task_texts[index].ljust(left_width)
-            + borders["v"]
-            + log_texts[index].ljust(right_width)
-            + borders["v"]
-        )
+    rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
+    rendered.append(borders["v"] + "Task Summary".center(content_width) + borders["v"])
+    summary_texts = [truncate(line, content_width - 2) for line in summary_lines]
+    while len(summary_texts) < summary_h:
+        summary_texts.append("")
+    rendered.extend(borders["v"] + text.ljust(content_width) + borders["v"] for text in summary_texts[:summary_h])
 
-    rendered.append(
-        borders["lm"]
-        + borders["h"] * left_width
-        + borders["bm"]
-        + borders["h"] * right_width
-        + borders["rm"]
-    )
+    rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
     if status.message:
         status_text = (
             f"Status: {status.state:<8} | {status.message} | "

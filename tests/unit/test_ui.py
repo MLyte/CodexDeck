@@ -126,7 +126,7 @@ def test_render_task_offset_shows_scrolled_slice() -> None:
         task_offset=3,
     )
 
-    assert "AI_TODO.md 4-18/25" in frame
+    assert "AI_TODO.md 4-7/25" in frame
     assert "task 0" not in frame
     assert "task 3" in frame
 
@@ -143,6 +143,22 @@ def test_render_marks_active_task() -> None:
 
     assert ">[ ] second task" in frame
     assert " [ ] first task" in frame
+
+
+def test_render_uses_horizontal_sections_with_summary() -> None:
+    frame = render_frame(
+        tasks=[Task("task")],
+        logs=["log line"],
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
+        width=100,
+        height=24,
+        summary_lines=["Target: line 1: task", "Tasks: 0 done | 1 open | 1 total"],
+    )
+
+    assert "AI_TODO.md 1-1/1" in frame
+    assert "Codex Output" in frame
+    assert "Task Summary" in frame
+    assert "Target: line 1: task" in frame
 
 
 def test_render_uses_compact_mode_for_small_terminal() -> None:

@@ -117,8 +117,8 @@ def test_loop_scrolls_todo_panel_with_navigation_keys(tmp_path: Path) -> None:
 
     cockpit.loop()
 
-    assert cockpit.task_offset == 10
-    assert any("AI_TODO.md 11-25/25" in frame for frame in frames)
+    assert cockpit.task_offset == 5
+    assert any("AI_TODO.md 6-9/25" in frame for frame in frames)
     assert key_reader.closed is True
 
 

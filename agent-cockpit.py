@@ -23,7 +23,7 @@ from typing import Callable, Optional, Protocol, TextIO
 
 from codexdeck_core import CockpitConfig, ConfigError, TodoTask, parse_todo_file
 from codexdeck_runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessNotRunning, RunStatus, RunnerState
-from codexdeck_ui import RenderStatus, clamp_task_offset, render_frame, truncate
+from codexdeck_ui import RenderStatus, clamp_task_offset, format_duration, render_frame, truncate
 
 
 TODO_SKELETON = """# AI_TODO
@@ -259,6 +259,7 @@ class Cockpit:
             task_offset=self.task_offset,
             active_task_id=self.active_task_id,
             task_panel_hint=self._task_panel_hint(),
+            summary_lines=self._summary_lines(runner_status),
         )
 
     def _activity_message(self, status: RunStatus) -> str:
@@ -333,7 +334,8 @@ class Cockpit:
     def _visible_task_count_for_height(height: int) -> int:
         if height < 20:
             return 0
-        return max(2, height - 5)
+        available_h = max(6, height - 9)
+        return max(3, min(8, available_h // 3 + 1))
 
     def _visible_task_count(self) -> int:
         _width, height = self._terminal_size()
@@ -376,6 +378,20 @@ class Cockpit:
             return
         self.load_todo_if_changed()
         self.runner.log_buffer.append("> Starter AI_TODO.md created. Replace the first task with your goal.")
+
+    def _summary_lines(self, status: RunStatus) -> list[str]:
+        task = self._next_open_task()
+        target = self.active_task_label or self.last_task_label or self._task_label(task)
+        done_count = sum(1 for task_item in self.tasks if task_item.done)
+        total_count = len(self.tasks)
+        pending_count = max(0, total_count - done_count)
+        duration = format_duration(getattr(status, "duration_seconds", None))
+
+        return [
+            f"Target: {target}",
+            f"Tasks: {done_count} done | {pending_count} open | {total_count} total",
+            f"Last run: {self.last_run} | Duration: {duration} | Errors: {getattr(status, 'errors', 0)}",
+        ]
 
     def stop(self) -> None:
         try:
