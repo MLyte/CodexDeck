@@ -125,6 +125,18 @@ class FakeKeyReader:
         self.closed = True
 
 
+class FakeScreenWriter:
+    def __init__(self) -> None:
+        self.frames: list[str] = []
+        self.closed = 0
+
+    def __call__(self, frame: str) -> None:
+        self.frames.append(frame)
+
+    def close(self) -> None:
+        self.closed += 1
+
+
 class BlockingStopRunner(FakeRunner):
     def __init__(self) -> None:
         super().__init__()
@@ -379,6 +391,46 @@ def test_loop_reload_key_refreshes_visible_tasks_and_summary(tmp_path: Path) -> 
     assert any("Tasks: 1 done | 1 open | 2 total" in frame for frame in frames)
     assert any("Reloaded AI_TODO.md" in line for line in runner.log_buffer.lines)
     assert key_reader.closed is True
+
+
+def test_edit_key_opens_todo_in_terminal_editor_and_reloads(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    config = make_config(tmp_path)
+    config.todo_path.write_text("- [ ] old task\n", encoding="utf-8")
+    runner = FakeRunner()
+    first_reader = FakeKeyReader(["e"])
+    second_reader = FakeKeyReader(["q", "y"])
+    readers = [first_reader, second_reader]
+    screen_writer = FakeScreenWriter()
+
+    def key_reader_factory() -> FakeKeyReader:
+        assert readers
+        return readers.pop(0)
+
+    def editor_runner(todo_path: Path) -> int:
+        todo_path.write_text("- [x] old task\n- [ ] edited in nano\n", encoding="utf-8")
+        return 0
+
+    cockpit = module.Cockpit(
+        config,
+        key_reader_factory=key_reader_factory,
+        terminal_size=lambda: (120, 24),
+        sleeper=lambda _delay: None,
+        screen_writer=screen_writer,
+        runner=runner,
+        editor_runner=editor_runner,
+    )
+
+    cockpit.loop()
+
+    assert first_reader.closed is True
+    assert second_reader.closed is True
+    assert screen_writer.closed >= 1
+    assert any("Back from nano. AI_TODO.md reloaded." in line for line in runner.log_buffer.lines)
+    assert any(" [x] old task" in frame and " [ ] edited in nano" in frame for frame in screen_writer.frames)
+    user_log = config.user_log_path.read_text(encoding="utf-8")
+    assert "editor opened" in user_log
+    assert "editor closed" in user_log
 
 
 def test_quit_requires_confirmation_and_can_be_cancelled(tmp_path: Path) -> None:

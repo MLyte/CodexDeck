@@ -16,11 +16,13 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from shlex import split as shlex_split
 from typing import Callable, Optional, Protocol, TextIO
 
 from codexdeck_core import CockpitConfig, ConfigError, TodoTask, parse_todo_file
@@ -210,6 +212,7 @@ class Cockpit:
         sleeper: Callable[[float], None] = time.sleep,
         screen_writer: Callable[[str], None] | None = None,
         runner: CodexProcessRunner | None = None,
+        editor_runner: Callable[[Path], int] | None = None,
     ) -> None:
         self.config = config
         self.todo_path = config.todo_path
@@ -241,6 +244,7 @@ class Cockpit:
         self._terminal_size = terminal_size or self._default_terminal_size
         self._sleeper = sleeper
         self._screen_writer = screen_writer or DefaultScreenWriter()
+        self._editor_runner = editor_runner or self._run_terminal_editor
         self.runner = runner or CodexProcessRunner(
             config.codex_cmd,
             config.log_path,
@@ -412,7 +416,7 @@ class Cockpit:
         return [
             "Help: CodexDeck keeps AI_TODO.md visible, runs one Codex process, and streams output.",
             "(r)un first open task | (s)top active run | (q)uit with confirmation.",
-            "(n)ew task input: Ctrl-S saves, Esc cancels | re(l)oad refreshes AI_TODO.md.",
+            "(e)dit opens AI_TODO.md in nano | (n)ew: Ctrl-S saves, Esc cancels | re(l)oad.",
             "(M)odel, (F)ast, (Pe)rm, Aut(o) adjust next run options | \u2191\u2193 scroll tasks.",
             "made by lyte | GitHub: https://github.com/MLyte/CodexDeck",
         ]
@@ -528,6 +532,49 @@ class Cockpit:
         self.load_todo_if_changed(force=True)
         self.runner.log_buffer.append("> New task saved to AI_TODO.md.")
         self._record_user_event(f"task added | text={text}")
+
+    @staticmethod
+    def _run_terminal_editor(todo_path: Path) -> int:
+        editor = os.getenv("CODEXDECK_EDITOR") or os.getenv("VISUAL") or os.getenv("EDITOR") or "nano"
+        command = [*shlex_split(editor), str(todo_path)]
+        return subprocess.run(command, check=False).returncode
+
+    def _open_todo_editor(self, key_reader: KeyReaderLike) -> KeyReaderLike:
+        try:
+            self.todo_path.parent.mkdir(parents=True, exist_ok=True)
+            if not self.todo_path.exists():
+                self.todo_path.write_text("# AI_TODO\n\n- [ ] First task\n", encoding="utf-8")
+                self.runner.log_buffer.append("> Created AI_TODO.md before opening editor.")
+        except OSError as exc:
+            self.runner.log_buffer.append(f"[ERROR] cannot prepare AI_TODO.md for editor: {exc}")
+            return key_reader
+
+        self.runner.log_buffer.append("> Opening AI_TODO.md in nano. Save or cancel there to return to CodexDeck.")
+        self._record_user_event(f"editor opened | path={self.todo_path}")
+
+        close_writer = getattr(self._screen_writer, "close", None)
+        if callable(close_writer):
+            close_writer()
+        key_reader.close()
+
+        try:
+            returncode = self._editor_runner(self.todo_path)
+        except OSError as exc:
+            self.runner.log_buffer.append(f"[ERROR] cannot open nano: {exc}")
+            self._record_user_event(f"editor failed | error={exc}")
+        else:
+            if returncode == 0:
+                self.runner.log_buffer.append("> Back from nano. AI_TODO.md reloaded.")
+                self._record_user_event(f"editor closed | path={self.todo_path} | returncode=0")
+            else:
+                self.runner.log_buffer.append(f"> Back from nano. Editor exited with code {returncode}. AI_TODO.md reloaded.")
+                self._record_user_event(f"editor closed | path={self.todo_path} | returncode={returncode}")
+
+        self.task_input_active = False
+        self.task_input_buffer = ""
+        self.quit_confirmation = False
+        self.load_todo_if_changed(force=True)
+        return self._key_reader_factory()
 
     def _cycle_model(self) -> None:
         if not self.models:
@@ -697,6 +744,10 @@ class Cockpit:
                             self._record_user_event(f"TODO reloaded | tasks={len(self.tasks)}")
                         elif k == "n":
                             self._begin_task_input()
+                        elif k == "e" and not self._status_running(runner_status):
+                            key_reader = self._open_todo_editor(key_reader)
+                        elif k == "e":
+                            self.runner.log_buffer.append("> Stop the active Codex run before editing AI_TODO.md in nano.")
                         elif k == "m":
                             self._cycle_model()
                         elif k == "f":

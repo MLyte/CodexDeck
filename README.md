@@ -27,7 +27,7 @@ the controls needed to guide one local Codex run without leaving the terminal.
 +--------------------------------------------------------------------------+
 | Status: RUNNING | Up: 12s | Dur: - | Err: 0 | [|] Codex is running ...  |
 | (M)odel: gpt-5.5 | (F)ast: off | (Pe)rm: default | Aut(o): off       |
-| Keys: (r)un CodexDeck | (s)top | (q)uit | (n)ew | ↑↓ scroll | ...     |
+| Keys: (r)un CodexDeck | (s)top | (q)uit | (e)dit | (n)ew | ...       |
 +--------------------------------------------------------------------------+
 ```
 
@@ -39,6 +39,7 @@ the controls needed to guide one local Codex run without leaving the terminal.
 - Highlights the first unchecked task as the current target.
 - Keeps long Markdown task lists scrollable with arrow keys and Page Up/Page Down.
 - Reloads the TODO file manually with `l` or automatically when the file changes.
+- Opens `AI_TODO.md` in `nano` with `e`, then returns to CodexDeck after save or cancel.
 - Opens a typed task input with `n`; `Ctrl-S` saves it and `Esc` cancels.
 - Creates `AI_TODO.md` automatically when saving the first typed task.
 
@@ -80,7 +81,7 @@ CodexDeck does not mark tasks done itself. The Codex run must update
 - Decodes batched POSIX arrow keys so repeated scrolling does not flood logs
   with ignored escape fragments.
 - Shows `Press h for help` instead of duplicating all shortcuts in the output.
-- Shows a detailed `CodexDeck Help` view in the output panel with a short app summary, grouped commands, and the GitHub link.
+- Shows detailed help in the output panel with a short app summary, grouped commands, and the GitHub link.
 - The `made by lyte` credit is linked in the help view: `https://github.com/MLyte/CodexDeck`.
 
 ### Controls
@@ -90,6 +91,7 @@ The footer keeps the main shortcuts visible in one mnemonic line.
 - `(r)un CodexDeck`: start the current run.
 - `(s)top`: stop the active run.
 - `(q)uit`: ask for quit confirmation.
+- `(e)dit`: open `AI_TODO.md` in `nano`, then return to CodexDeck.
 - `re(l)oad`: reload `AI_TODO.md`.
 - `(n)ew`: type a new task, then press `Ctrl-S` to save.
 - `(m)odel`: cycle configured model labels.
@@ -122,6 +124,7 @@ Main settings:
 - `CODEX_LOG_PATH` or `LOG_PATH`: process log path. Default: `logs/agent.log`.
 - `CODEX_USER_LOG_PATH` or `USER_LOG_PATH`: user event log path. Default: `logs/user.log`.
 - `CODEX_CONFIG_PATH`: alternate config file path.
+- `CODEXDECK_EDITOR`: terminal editor command used by `e`. Default: `nano`.
 - `CODEX_ASCII_BORDERS=1`: force ASCII borders.
 
 Supported command placeholders:
@@ -203,7 +206,7 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
 
 - One Codex process only; no multi-agent or parallel execution.
 - Automatic mode depends on Codex updating `AI_TODO.md`.
-- `n` supports single-line task entry only; CodexDeck is not a full text editor.
+- `n` supports single-line task entry only; use `e` to edit the full TODO file in `nano`.
 - No detailed per-task completion report yet.
 - No visual diff when `AI_TODO.md` changes.
 - No log search, replay, or rotation.
@@ -229,6 +232,7 @@ le terminal.
 - Met en évidence la première tâche non cochée.
 - Permet de scroller les longues listes Markdown avec les flèches et Page Up/Page Down.
 - Recharge le TODO avec `l` ou automatiquement quand le fichier change.
+- Ouvre `AI_TODO.md` dans `nano` avec `e`, puis revient à CodexDeck après sauvegarde ou annulation.
 - Crée un `AI_TODO.md` de départ avec `n` si le fichier manque.
 - Ouvre une saisie de tâche avec `n`; `Ctrl-S` sauvegarde et `Esc` annule.
 - Crée `AI_TODO.md` automatiquement lors de la sauvegarde de la première tâche.
@@ -272,7 +276,7 @@ CodexDeck ne coche pas les tâches lui-même. Le run Codex doit modifier
 - Décodage propre des flèches répétées pour éviter les fragments d'échappement
   dans les logs.
 - Message de démarrage court : `Press h for help`.
-- Vue d'aide détaillée dans le panneau de sortie avec résumé de l'app, commandes groupées et lien GitHub.
+- Aide détaillée dans le panneau de sortie avec résumé de l'app, commandes groupées et lien GitHub.
 - Le crédit `made by lyte` est lié dans l'aide : `https://github.com/MLyte/CodexDeck`.
 
 ### Raccourcis
@@ -282,6 +286,7 @@ Le footer garde les raccourcis principaux visibles sur une seule ligne.
 - `(r)un CodexDeck` : lancer CodexDeck.
 - `(s)top` : stopper le run actif.
 - `(q)uit` : demander confirmation avant de quitter.
+- `(e)dit` : ouvrir `AI_TODO.md` dans `nano`, puis revenir à CodexDeck.
 - `re(l)oad` : recharger `AI_TODO.md`.
 - `(n)ew` : taper une nouvelle tâche, puis `Ctrl-S` pour sauvegarder.
 - `(m)odel` : changer de modèle.
@@ -309,6 +314,7 @@ Paramètres principaux :
 - `CODEX_TODO_PATH` ou `TODO_PATH` : chemin du TODO.
 - `CODEX_LOG_PATH` ou `LOG_PATH` : chemin des logs process.
 - `CODEX_USER_LOG_PATH` ou `USER_LOG_PATH` : chemin des événements utilisateur.
+- `CODEXDECK_EDITOR` : commande d'éditeur terminal utilisée par `e`. Défaut : `nano`.
 - `CODEX_ASCII_BORDERS=1` : forcer les bordures ASCII.
 
 Placeholders supportés dans `CODEX_CMD` :
@@ -351,7 +357,7 @@ python3 -m pytest -q
 - Un seul processus Codex à la fois.
 - Pas de multi-agent ni d'exécution parallèle.
 - Le mode automatique dépend des modifications faites par Codex dans `AI_TODO.md`.
-- `n` supporte une saisie de tâche sur une ligne, pas un éditeur complet.
+- `n` supporte une saisie de tâche sur une ligne; utiliser `e` pour éditer tout le TODO dans `nano`.
 - Pas encore de rapport détaillé par tâche.
 - Pas de diff visuel quand `AI_TODO.md` change.
 - Pas de recherche, replay ou rotation de logs.

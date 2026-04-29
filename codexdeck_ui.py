@@ -128,7 +128,7 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
             f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)}"
         ),
         f"Last run: {status.last_run}",
-        "Keys: (r)un CodexDeck | (s)top | (q)uit | re(l)oad | (n)ew | \u2191\u2193 scroll | (h)elp | made by lyte",
+        "Keys: (r)un CodexDeck | (s)top | (q)uit | (e)dit | re(l)oad | (n)ew | \u2191\u2193 scroll | (h)elp | made by lyte",
     ]
     if status.message:
         lines.insert(2, status.message)
@@ -139,7 +139,7 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
                 "Help",
                 "CodexDeck keeps AI_TODO.md visible, runs one Codex process, and streams output.",
                 "Options: (M)odel, (F)ast, (Pe)rm, Aut(o)",
-                "Keys: (r)un, (s)top, (q)uit, re(l)oad, (n)ew, \u2191\u2193 scroll, (h)elp",
+                "Keys: (r)un, (s)top, (q)uit, (e)dit, re(l)oad, (n)ew, \u2191\u2193 scroll, (h)elp",
                 "made by lyte | https://github.com/MLyte/CodexDeck",
             ]
         )
@@ -249,7 +249,7 @@ def render_frame(
         f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)}"
     )
     shortcuts_line = (
-        "Keys: (r)un CodexDeck | (s)top | (q)uit | re(l)oad | (n)ew | "
+        "Keys: (r)un CodexDeck | (s)top | (q)uit | (e)dit | re(l)oad | (n)ew | "
         "\u2191\u2193 scroll | (h)elp | made by lyte"
     )
     rendered.append(borders["v"] + truncate(status_line, content_width).ljust(content_width) + borders["v"])

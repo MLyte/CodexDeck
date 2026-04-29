@@ -281,7 +281,9 @@ def test_render_footer_lists_shortcuts_by_importance() -> None:
     assert "Err:" not in runtime_line
     assert shortcuts_line.index("(r)un CodexDeck") < shortcuts_line.index("(s)top")
     assert shortcuts_line.index("(s)top") < shortcuts_line.index("(q)uit")
-    assert shortcuts_line.index("(q)uit") < shortcuts_line.index("re(l)oad")
+    assert shortcuts_line.index("(q)uit") < shortcuts_line.index("(e)dit")
+    assert shortcuts_line.index("(e)dit") < shortcuts_line.index("re(l)oad")
+    assert "(e)dit" in shortcuts_line
     assert "re(l)oad" in shortcuts_line
     assert "(n)ew" in shortcuts_line
     assert "(a)dd" not in shortcuts_line
