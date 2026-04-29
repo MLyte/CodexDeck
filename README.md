@@ -55,11 +55,15 @@ python agent-cockpit.py
 
 - `r`: lancer Codex
 - `s`: arrêter le process actif
+- `l`: recharger `AI_TODO.md`
+- `h` / `?`: afficher ou masquer l’aide
+- `j` / `k`, flèches haut/bas, Page Up/Page Down: faire défiler la liste des tâches
 - `q`: quitter CodexDeck
 
 ## Configuration
 
-CodexDeck lit principalement sa configuration depuis l’environnement.
+CodexDeck lit d’abord un fichier optionnel `codexdeck.conf` à la racine du projet, puis applique les variables d’environnement en surcharge.
+Le format du fichier est volontairement simple: une ligne `KEY=VALUE` par réglage; les lignes vides et les commentaires `#` sont ignorés.
 
 - `CODEX_CMD`: commande utilisée pour lancer Codex, par défaut `codex {todo}`
 - `CODEX_MODEL`: nom affiché dans la status bar, par défaut `normal`
@@ -70,6 +74,15 @@ CodexDeck lit principalement sa configuration depuis l’environnement.
 - `CODEX_TODO_PATH` / `TODO_PATH`: chemin du backlog, par défaut `AI_TODO.md`
 - `CODEX_LOG_PATH` / `LOG_PATH`: chemin du log persistant, par défaut `logs/agent.log`
 - `CODEX_ASCII_BORDERS=1`: force les bordures ASCII (`+---+`) pour les terminaux qui affichent mal l’Unicode
+- `CODEX_CONFIG_PATH`: chemin d’un fichier de configuration optionnel autre que `codexdeck.conf`
+
+Exemple `codexdeck.conf`:
+
+```text
+CODEX_CMD=python tests/stubs/codex_stub.py --mode success {todo}
+CODEX_MODEL=gpt-conf
+MAX_LOG_LINES=77
+```
 
 Exemple avec un stub local:
 
@@ -114,6 +127,41 @@ Le backlog pousse le code vers quatre couches testables:
 - `io`: fichiers, logs, sanitisation
 
 Cette séparation doit permettre de tester le coeur sans terminal interactif et sans lancer réellement Codex.
+
+```text
+AI_TODO.md + env/config
+        |
+        v
+codexdeck.py
+        |
+        v
+agent-cockpit.py  <---- keyboard + terminal size
+        |
+        +---- codexdeck_core.py
+        |        - CockpitConfig
+        |        - TodoTask parser
+        |        - command builder
+        |
+        +---- codexdeck_ui.py
+        |        - pure frame rendering
+        |        - width/height truncation
+        |        - compact mode and task scrolling
+        |
+        +---- codexdeck_runner.py
+                 - single child process
+                 - interrupt -> terminate -> kill stop ladder
+                 - run state and metrics
+                 - live log buffer
+                 - logs/agent.log
+```
+
+Flux principal:
+
+1. `codexdeck.py` charge l’entrypoint officiel et masque les détails de compatibilité.
+2. `agent-cockpit.py` orchestre clavier, refresh, reload du TODO et actions utilisateur.
+3. `codexdeck_core.py` valide la configuration et transforme `AI_TODO.md` en tâches structurées.
+4. `codexdeck_runner.py` construit la commande, lance un seul process enfant et persiste les logs.
+5. `codexdeck_ui.py` reçoit uniquement des données prêtes à afficher et retourne une frame texte.
 
 ## Tests Cibles
 
@@ -172,18 +220,18 @@ Checklist courte avant de marquer un incrément MVP comme prêt:
 
 ## Roadmap Courte
 
-- solidifier `CockpitConfig`
-- isoler `CodexProcessRunner`
-- rendre la state machine explicite
-- ajouter le stub Codex et la suite `pytest`
+- finaliser les derniers cas limites de configuration fichier + environnement
+- renforcer l’arrêt contrôlé du process Codex sur Windows et Unix
+- étendre les tests de scroll et de rendu compact
 - améliorer le rendu terminal multi-tailles
-- ajouter `.gitignore`, `.gitattributes`, scripts PowerShell et CI
+- ajouter ou brancher la CI de validation locale
 
 ## Dépannage
 
 - `codex` introuvable: définir `CODEX_CMD` avec un chemin valide ou installer le CLI Codex.
-- commande invalide: lancer `python codexdeck.py --print-config` et vérifier `CODEX_CMD`; les arguments sont parsés puis exécutés avec `shell=False`.
-- terminal trop petit: agrandir la fenêtre; le mode compact est prévu dans le backlog.
+- commande invalide: lancer `python -m codexdeck --print-config` et vérifier `CODEX_CMD`; les arguments sont parsés puis exécutés avec `shell=False`.
+- configuration invalide: vérifier `codexdeck.conf`; chaque ligne active doit être au format `KEY=VALUE`.
+- terminal trop petit: agrandir la fenêtre; CodexDeck bascule automatiquement vers un rendu compact sous 80 colonnes ou 20 lignes.
 - logs absents: vérifier les droits d’écriture dans `logs/`; le dossier est créé automatiquement au lancement du runner.
 - sortie illisible: le fallback ASCII et les modes `NO_COLOR` / `FORCE_COLOR` sont prévus dans le backlog.
 - chemins inattendus: lancer `python -m codexdeck --print-config`; `CODEX_TODO_PATH` et `CODEX_LOG_PATH` acceptent chemins relatifs au dossier courant ou chemins absolus explicites.
