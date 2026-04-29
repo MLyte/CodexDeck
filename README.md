@@ -8,7 +8,7 @@ CodexDeck is a local terminal cockpit for running one Codex process against an
 Its job is simple: keep the plan visible, stream Codex output live, and expose
 the controls needed to guide one local Codex run without leaving the terminal.
 
-![CodexDeck terminal UI screenshot](docs/codexdeck-tui.svg)
+![CodexDeck terminal UI screenshot](docs/codexdeck-tui.png)
 
 ```text
 +--------------------------------------------------------------------------+
