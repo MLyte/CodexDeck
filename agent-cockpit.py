@@ -78,6 +78,44 @@ class KeyReaderLike(Protocol):
         ...
 
 
+class DefaultScreenWriter:
+    def __init__(self) -> None:
+        self._previous_lines = 0
+        self._cleared_once = False
+
+    def __call__(self, content: str) -> None:
+        if os.name == "nt":
+            if not self._cleared_once:
+                os.system("cls")
+                self._cleared_once = True
+            elif not self._move_windows_cursor_home():
+                os.system("cls")
+        else:
+            print("\033[H" if self._cleared_once else "\033[2J\033[H", end="")
+            self._cleared_once = True
+
+        line_count = content.count("\n") + (0 if content.endswith("\n") else 1)
+        extra_lines = max(0, self._previous_lines - line_count)
+        if extra_lines:
+            columns = shutil.get_terminal_size(fallback=(100, 24)).columns
+            blank_lines = "\n".join(" " * columns for _ in range(extra_lines))
+            content = content + ("\n" if not content.endswith("\n") else "") + blank_lines
+        print(content, end="", flush=True)
+        self._previous_lines = max(self._previous_lines, line_count)
+
+    @staticmethod
+    def _move_windows_cursor_home() -> bool:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            stdout = ctypes.windll.kernel32.GetStdHandle(-11)
+            coord = wintypes._COORD(0, 0)
+            return bool(ctypes.windll.kernel32.SetConsoleCursorPosition(stdout, coord))
+        except Exception:
+            return False
+
+
 class Cockpit:
     def __init__(
         self,
@@ -100,7 +138,7 @@ class Cockpit:
         self._key_reader_factory = key_reader_factory
         self._terminal_size = terminal_size or self._default_terminal_size
         self._sleeper = sleeper
-        self._screen_writer = screen_writer or self._default_screen_writer
+        self._screen_writer = screen_writer or DefaultScreenWriter()
         self.runner = runner or CodexProcessRunner(
             config.codex_cmd,
             config.log_path,
@@ -113,14 +151,6 @@ class Cockpit:
     def _default_terminal_size() -> tuple[int, int]:
         size = shutil.get_terminal_size(fallback=(100, 24))
         return size.columns, size.lines
-
-    @staticmethod
-    def _default_screen_writer(content: str) -> None:
-        if os.name == "nt":
-            os.system("cls")
-        else:
-            print("\033[2J\033[H", end="")
-        print(content, end="", flush=True)
 
     def load_todo_if_changed(self, *, force: bool = False) -> None:
         try:
