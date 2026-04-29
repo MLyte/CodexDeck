@@ -15,6 +15,8 @@ from codexdeck_core import CockpitConfig
 from codexdeck_runner import CodexProcessRunner
 from codexdeck_runner import ProcessNotRunning, RunnerState
 
+PYTHON_CMD = Path(sys.executable).as_posix()
+
 
 def load_cockpit_module() -> ModuleType:
     path = Path(__file__).resolve().parents[2] / "agent-cockpit.py"
@@ -309,7 +311,7 @@ def test_sleep_stub_stops_from_tui_without_freezing(tmp_path: Path) -> None:
         todo_path=config.todo_path,
         log_path=config.log_path,
         user_log_path=config.user_log_path,
-        codex_cmd=f"{sys.executable} {stub_path} --mode sleep --delay 0.01 {{todo}}",
+        codex_cmd=f"{PYTHON_CMD} {stub_path.as_posix()} --mode sleep --delay 0.01 {{todo}}",
         refresh_hz=1000.0,
         stop_timeout=0.5,
     )
@@ -731,7 +733,7 @@ def test_short_stub_output_keeps_active_marker_on_first_open_task(tmp_path: Path
         todo_path=config.todo_path,
         log_path=config.log_path,
         user_log_path=config.user_log_path,
-        codex_cmd=f"{sys.executable} {stub_path} --mode success {{todo}}",
+        codex_cmd=f"{PYTHON_CMD} {stub_path.as_posix()} --mode success {{todo}}",
         refresh_hz=1000.0,
     )
     config.todo_path.write_text(
