@@ -251,8 +251,9 @@ def main() -> None:
         if exc.cause is not None:
             print(f"Cause: {exc.cause}", file=sys.stderr)
         raise SystemExit(2) from exc
-    except KeyboardInterrupt as exc:
-        raise SystemExit(130) from exc
+    except KeyboardInterrupt:
+        print("\nCodexDeck stopped cleanly.")
+        raise SystemExit(0)
 
 
 if __name__ == "__main__":

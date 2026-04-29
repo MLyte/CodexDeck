@@ -61,8 +61,9 @@ def main() -> None:
             print_config()
             return
         runpy.run_path(str(Path(__file__).with_name("agent-cockpit.py")), run_name="__main__")
-    except KeyboardInterrupt as exc:
-        raise SystemExit(130) from exc
+    except KeyboardInterrupt:
+        print("\nCodexDeck stopped cleanly.")
+        raise SystemExit(0)
 
 
 if __name__ == "__main__":
