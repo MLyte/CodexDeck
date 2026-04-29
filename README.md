@@ -35,18 +35,19 @@ Le cap MVP:
 Pré-requis: Python 3.9+.
 
 ```powershell
-python codexdeck.py
+python -m codexdeck
 ```
 
 Afficher la configuration résolue:
 
 ```powershell
-python codexdeck.py --print-config
+python -m codexdeck --print-config
 ```
 
 Ancien point d’entrée encore disponible pendant la transition:
 
 ```powershell
+python codexdeck.py
 python agent-cockpit.py
 ```
 
@@ -74,7 +75,7 @@ Exemple avec un stub local:
 
 ```powershell
 $env:CODEX_CMD="python tests/stubs/codex_stub.py --mode success {todo}"
-python codexdeck.py
+python -m codexdeck
 ```
 
 ## Backlog Piloté Par IA
@@ -133,6 +134,7 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke.ps1
 ```
 
 Les tests ne dépendent pas du vrai binaire `codex`. Ils utilisent `FakePopen`, des répertoires temporaires et `tests/stubs/codex_stub.py`.
+La fixture commune `tests/conftest.py` isole les variables d’environnement CodexDeck, force l’I/O Python en UTF-8 et vérifie qu’aucun test n’écrit dans le vrai `logs/agent.log` du repo.
 
 Ordre de validation release:
 
@@ -144,8 +146,18 @@ Exemple smoke manuel Windows:
 
 ```powershell
 $env:CODEX_CMD="python tests/stubs/codex_stub.py --mode success {todo}"
-python codexdeck.py
+python -m codexdeck
 ```
+
+## Runbook Qualité MVP
+
+Checklist courte avant de marquer un incrément MVP comme prêt:
+
+1. Lancer `python -m pytest -q` depuis la racine.
+2. Lancer `powershell -ExecutionPolicy Bypass -File scripts\test.ps1`.
+3. Vérifier `python -m codexdeck --print-config`: chemins résolus, `logs/agent.log` relatif au projet sauf override explicite.
+4. Faire un smoke stub manuel avec `CODEX_CMD` pointant vers `tests/stubs/codex_stub.py`.
+5. Confirmer que les fichiers lus/écrits explicitement par l’app utilisent UTF-8 et que les logs locaux ne sont pas suivis par Git.
 
 ## Fichiers
 
@@ -174,6 +186,7 @@ python codexdeck.py
 - terminal trop petit: agrandir la fenêtre; le mode compact est prévu dans le backlog.
 - logs absents: vérifier les droits d’écriture dans `logs/`; le dossier est créé automatiquement au lancement du runner.
 - sortie illisible: le fallback ASCII et les modes `NO_COLOR` / `FORCE_COLOR` sont prévus dans le backlog.
+- chemins inattendus: lancer `python -m codexdeck --print-config`; `CODEX_TODO_PATH` et `CODEX_LOG_PATH` acceptent chemins relatifs au dossier courant ou chemins absolus explicites.
 
 ## Compatibilité Console
 

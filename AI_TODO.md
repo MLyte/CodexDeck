@@ -92,7 +92,7 @@
 
 ### E) Contexte d’exécution [P0][MVP]
 - [x] E01 [P0][MVP] Ajouter un contexte run (`run_id`, `pid`, `start_ts`, `last_error`) exposable à la UI.
-- [ ] E02 [P1][MVP] Calculer `uptime` et durée du run courant dans la status bar.
+- [x] E02 [P1][MVP] Calculer `uptime` et durée du run courant dans la status bar.
 
 ### F) Runner de process [P0][MVP]
 - [x] F01 [P0][MVP] Encapsuler le cycle process dans une classe `CodexProcessRunner` (`start/stop/status/wait`).
@@ -134,11 +134,11 @@
 - [ ] L03 [P1][V2] Ajouter test pour append-only across runs.
 
 ### M) UI non bloquante [P0][MVP]
-- [ ] M01 [P0][MVP] Vérifier le render loop sans blocage clavier (polling non bloquant).
+- [x] M01 [P0][MVP] Vérifier le render loop sans blocage clavier (polling non bloquant).
 - [x] M02 [P0][MVP] Ajouter rafraîchissement à taux constant configurable (8-20 Hz).
-- [ ] M03 [P1][MVP] Ajouter fallback si taille terminal trop petite.
+- [x] M03 [P1][MVP] Ajouter fallback si taille terminal trop petite.
 - [x] M04 [P0][MVP] Garantir restauration terminal en `finally` après `q`, exception, `Ctrl+C` ou crash process.
-- [ ] M05 [P1][MVP] Dégrader proprement le rendu sous taille minimale (`<80x20`): message compact + status + commandes essentielles.
+- [x] M05 [P1][MVP] Dégrader proprement le rendu sous taille minimale (`<80x20`): message compact + status + commandes essentielles.
 
 ### N) Rendu panneaux [P0][MVP]
 - [ ] N01 [P0][MVP] Corriger les largeurs avec bordures stables (pas de caractères parasites).
@@ -150,33 +150,33 @@
 
 ### O) Contrôles clavier [P0][MVP]
 - [x] O01 [P0][MVP] `r` = run, `s` = stop, `q` = quit (comportement stable).
-- [ ] O02 [P1][MVP] Aide clavier (`?` / `h`) affichant les raccourcis.
+- [x] O02 [P1][MVP] Aide clavier (`?` / `h`) affichant les raccourcis.
 - [ ] O03 [P1][V2] Ajout mode pause de scroll / freeze fenêtre.
 - [x] O04 [P0][MVP] Implémenter un lecteur clavier cross-platform isolé (`msvcrt` Windows, `termios/select` Unix) avec tests conditionnels.
 - [ ] O05 [P1][MVP] Ajouter confirmations uniquement pour actions destructrices ou ambiguës, sans bloquer le render loop.
-- [ ] O06 [P1][MVP] Gérer touches inconnues sans bruit excessif: pas de crash, message bref optionnel.
+- [x] O06 [P1][MVP] Gérer touches inconnues sans bruit excessif: pas de crash, message bref optionnel.
 
 ### P) Rafraîchissement TODO [P0][MVP]
 - [x] P01 [P0][MVP] Rechargement automatique à la modification du fichier (mtime + debounce).
-- [ ] P02 [P1][MVP] Rechargement manuel via touche dédiée.
+- [x] P02 [P1][MVP] Rechargement manuel via touche dédiée.
 - [ ] P03 [P2][V2] Diff visuel des tâches ajoutées/supprimées.
 
 ### Q) Observabilité [P1][V2]
-- [ ] Q01 [P1][V2] Exposer métriques simples: `runs_total`, `runs_success`, `runs_fail`, `errors_total`.
-- [ ] Q02 [P1][V2] Historique run courant dans la status bar/log.
+- [x] Q01 [P1][V2] Exposer métriques simples: `runs_total`, `runs_success`, `runs_fail`, `errors_total`.
+- [x] Q02 [P1][V2] Historique run courant dans la status bar/log.
 - [ ] Q03 [P2][V2] Endpoint local debug (facultatif) pour état JSON.
 
 ### R) Vérification de robustesse [P1][MVP]
 - [x] R01 [P0][MVP] Créer l'ossature `tests/unit`, `tests/integration`, `tests/smoke`, `tests/stubs` — AC: `python -m pytest -q` découvre les tests sans erreur d'import.
-- [ ] R02 [P0][MVP] Ajouter fixtures communes (`tmp_path`, `AI_TODO.md` temporaire, `logs/agent.log` temporaire, env isolé) — AC: aucun test n'écrit dans le vrai `logs/agent.log`.
+- [x] R02 [P0][MVP] Ajouter fixtures communes (`tmp_path`, `AI_TODO.md` temporaire, `logs/agent.log` temporaire, env isolé) — AC: aucun test n'écrit dans le vrai `logs/agent.log`.
 - [x] R03 [P0][MVP] Tests unitaires parser TODO — AC: couvre `- [ ]`, `- [x]`, `* [X]`, indentation, sections, lignes invalides, fichier absent.
 - [x] R04 [P0][MVP] Tests unitaires `build_command` — AC: couvre commande par défaut, commande vide rejetée, `{todo}`, `$TODO`, `%TODO%`, arguments avec espaces.
 - [x] R05 [P0][MVP] Tests unitaires state machine — AC: transitions légales acceptées, transitions illégales refusées avec erreur contrôlée.
 - [x] R06 [P0][MVP] Tests unitaires runner avec `FakePopen` — AC: start success, `Popen` exception, exit code 0, exit code non-zero, stop terminate, fallback kill.
 - [x] R07 [P0][MVP] Tests logs et queue — AC: stdout fake horodaté, envoyé à la queue, écrit en append, limite de queue respectée.
 - [x] R08 [P1][MVP] Tests rendu TUI pur — AC: rendu ne crashe pas à 60/80/120 colonnes, status bar contient state/model/errors.
-- [ ] R09 [P1][MVP] Tests boucle non bloquante avec fake key reader — AC: séquence `r`, `s`, `q` termine sans attendre une vraie entrée clavier.
-- [ ] R10 [P1][MVP] Test de restauration terminal après exception simulée pendant la boucle UI — AC: cleanup appelé en `finally`.
+- [x] R09 [P1][MVP] Tests boucle non bloquante avec fake key reader — AC: séquence `r`, `s`, `q` termine sans attendre une vraie entrée clavier.
+- [x] R10 [P1][MVP] Test de restauration terminal après exception simulée pendant la boucle UI — AC: cleanup appelé en `finally`.
 - [ ] R11 [P1][V2] Tests multi-OS ciblés (`msvcrt`/`tty`) — AC: tests conditionnels par plateforme documentés et stables en CI.
 
 ### S) Tuiles de logs + replay [P1][V2]
@@ -206,7 +206,7 @@
 - [ ] V06 [P2][V2] Ajouter thème contraste élevé pour consoles Windows et terminaux sombres/clairs.
 
 ### W) Packaging / runbook [P1][MVP]
-- [ ] W01 [P1][MVP] Script de lancement fiable (`python -m` ou `.\codexdeck.py`).
+- [x] W01 [P1][MVP] Script de lancement fiable (`python -m` ou `.\codexdeck.py`).
 - [x] W02 [P1][MVP] Ajouter `.gitignore` pour éviter le bruit logs locaux.
 - [x] W03 [P1][MVP] Ajouter configuration test minimale (`pyproject.toml` ou équivalent) — AC: `python -m pytest -q` fonctionne depuis la racine repo.
 - [x] W04 [P1][MVP] Ajouter CI GitHub Actions Python — AC: checkout, setup-python, install deps, pytest unit+integration sans Codex réel.
@@ -226,7 +226,7 @@
 - [ ] X07 [P2][V2] Ajouter schéma d'architecture (inputs/outputs/state machine).
 
 ### Y) Conformité locale / qualité de repo [P1][MVP]
-- [ ] Y01 [P1][MVP] Vérifier ligne fine encodage et chemins `logs/agent.log`.
+- [x] Y01 [P1][MVP] Vérifier ligne fine encodage et chemins `logs/agent.log`.
 - [x] Y02 [P1][MVP] Ajouter garde-fou d’encodage UTF-8 partout.
 - [ ] Y03 [P2][V2] Prévoir stratégie de secrets si l’environnement nécessite tokens.
 - [x] Y04 [P1][MVP] Documenter compatibilité console: Windows Terminal, PowerShell, cmd, Git Bash, Linux/macOS terminal.
@@ -238,12 +238,12 @@
 ### Backend DoD MVP
 - [x] BD01 [P0][MVP] Tous les composants core sont testables sans terminal interactif et sans process Codex réel.
 - [ ] BD02 [P0][MVP] Les erreurs utilisateur ont un `error_code`, un message court, et une cause technique loggée.
-- [ ] BD03 [P0][MVP] Aucun thread lancé par un run ne reste vivant après `stop`, timeout ou fin normale.
+- [x] BD03 [P0][MVP] Aucun thread lancé par un run ne reste vivant après `stop`, timeout ou fin normale.
 - [x] BD04 [P0][MVP] Les tests couvrent parser, config, command builder, state machine, process runner, log queue.
 
 ### Z) Finalisation MVP -> V2 [P0][MVP]
 - [x] Z01 [P0][MVP] Critères Go/No-Go automatisés — AC: `python -m pytest -q` passe et couvre parser, commande, runner, state machine, logs.
 - [x] Z02 [P0][MVP] Critères Go/No-Go smoke — AC: success/fail/stop/spam passent avec stub local et aucun process résiduel.
 - [ ] Z03 [P0][MVP] Critères Go/No-Go manuel — AC: lancer l'app, appuyer `r`, voir logs live, `s` stoppe, `q` quitte, terminal restauré.
-- [ ] Z04 [P1][MVP] Faire le point qualité: revue de checklist complète + correction des écarts.
+- [x] Z04 [P1][MVP] Faire le point qualité: revue de checklist complète + correction des écarts.
 - [ ] Z05 [P1][V2] Gate V2: politiques de timeout avancées + modèle low tokens + stop amélioré + observabilité avancée.

@@ -18,7 +18,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, Protocol
 
 from codexdeck_core import CockpitConfig, ConfigError, TodoTask, parse_todo_file
 from codexdeck_runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessNotRunning, RunnerState
@@ -70,10 +70,24 @@ class KeyReader:
             self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._orig)
 
 
+class KeyReaderLike(Protocol):
+    def get_key(self) -> Optional[str]:
+        ...
+
+    def close(self) -> None:
+        ...
+
+
 class Cockpit:
     def __init__(
         self,
         config: CockpitConfig,
+        *,
+        key_reader_factory: Callable[[], KeyReaderLike] = KeyReader,
+        terminal_size: Callable[[], tuple[int, int]] | None = None,
+        sleeper: Callable[[float], None] = time.sleep,
+        screen_writer: Callable[[str], None] | None = None,
+        runner: CodexProcessRunner | None = None,
     ) -> None:
         self.config = config
         self.todo_path = config.todo_path
@@ -82,7 +96,12 @@ class Cockpit:
         self._todo_mtime = None
         self.last_run = "never"
         self.model = config.model
-        self.runner = CodexProcessRunner(
+        self.show_help = False
+        self._key_reader_factory = key_reader_factory
+        self._terminal_size = terminal_size or self._default_terminal_size
+        self._sleeper = sleeper
+        self._screen_writer = screen_writer or self._default_screen_writer
+        self.runner = runner or CodexProcessRunner(
             config.codex_cmd,
             config.log_path,
             max_log_lines=config.max_log_lines,
@@ -90,17 +109,29 @@ class Cockpit:
             run_timeout=config.run_timeout,
         )
 
-    def load_todo_if_changed(self) -> None:
+    @staticmethod
+    def _default_terminal_size() -> tuple[int, int]:
+        size = shutil.get_terminal_size(fallback=(100, 24))
+        return size.columns, size.lines
+
+    @staticmethod
+    def _default_screen_writer(content: str) -> None:
+        print("\033[2J\033[H", end="")
+        print(content, end="", flush=True)
+
+    def load_todo_if_changed(self, *, force: bool = False) -> None:
         try:
             stat = self.todo_path.stat()
         except FileNotFoundError:
             self.tasks = []
             return
-        if self._todo_mtime == stat.st_mtime:
+        if not force and self._todo_mtime == stat.st_mtime:
             return
         self._todo_mtime = stat.st_mtime
         try:
             self.tasks = parse_todo_file(self.todo_path)
+            if force:
+                self.runner.log_buffer.append("> Reloaded AI_TODO.md")
         except ConfigError as exc:
             self.tasks = []
             self.runner.log_buffer.append(f"[ERROR] {exc.message}")
@@ -133,6 +164,7 @@ class Cockpit:
             width=width,
             height=height,
             ascii_borders=os.getenv("CODEX_ASCII_BORDERS") == "1",
+            show_help=self.show_help,
         )
 
     def stop(self) -> None:
@@ -142,9 +174,9 @@ class Cockpit:
             return
 
     def loop(self) -> None:
-        key_reader = KeyReader()
+        key_reader = self._key_reader_factory()
         self.load_todo_if_changed()
-        self.runner.log_buffer.append("> Ready. Press 'r' to run Codex, 's' to stop, 'q' to quit.")
+        self.runner.log_buffer.append("> Ready. Press 'r' run, 's' stop, 'l' reload, 'h/?' help, 'q' quit.")
 
         try:
             while True:
@@ -155,15 +187,20 @@ class Cockpit:
                     k = key.lower()
                     if k == "q":
                         break
-                    if k == "r" and runner_status.state not in {RunnerState.RUNNING, RunnerState.STARTING}:
+                    elif k == "r" and runner_status.state not in {RunnerState.RUNNING, RunnerState.STARTING}:
                         self._start_codex()
-                    if k == "s" and runner_status.state == RunnerState.RUNNING:
+                    elif k == "s" and runner_status.state == RunnerState.RUNNING:
                         self.stop()
-                width, height = shutil.get_terminal_size(fallback=(100, 24))
+                    elif k == "l":
+                        self.load_todo_if_changed(force=True)
+                    elif k in {"h", "?"}:
+                        self.show_help = not self.show_help
+                    else:
+                        self.runner.log_buffer.append(f"> Ignored key: {repr(key)}")
+                width, height = self._terminal_size()
                 content = self._render(width, height)
-                print("\033[2J\033[H", end="")
-                print(content, end="", flush=True)
-                time.sleep(self.refresh_delay)
+                self._screen_writer(content)
+                self._sleeper(self.refresh_delay)
         finally:
             self.stop()
             key_reader.close()

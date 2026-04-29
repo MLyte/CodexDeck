@@ -115,6 +115,11 @@ def test_wait_success_returns_idle(tmp_path: Path) -> None:
     assert status.state == RunnerState.IDLE
     assert status.returncode == 0
     assert status.errors == 0
+    assert status.duration_seconds is not None
+    assert status.metrics.runs_total == 1
+    assert status.metrics.runs_success == 1
+    assert status.metrics.runs_fail == 0
+    assert runner._reader_thread is None
 
 
 def test_wait_non_zero_is_counted(tmp_path: Path) -> None:
@@ -128,6 +133,10 @@ def test_wait_non_zero_is_counted(tmp_path: Path) -> None:
     assert status.returncode == 7
     assert status.errors == 1
     assert status.last_error == "PROCESS_EXIT_NON_ZERO: 7"
+    assert status.metrics.runs_total == 1
+    assert status.metrics.runs_success == 0
+    assert status.metrics.runs_fail == 1
+    assert status.metrics.errors_total == 1
 
 
 def test_stop_terminates_process(tmp_path: Path) -> None:
@@ -140,6 +149,7 @@ def test_stop_terminates_process(tmp_path: Path) -> None:
     assert process.terminated is True
     assert process.killed is False
     assert status.state == RunnerState.IDLE
+    assert runner._reader_thread is None
 
 
 def test_stop_kills_after_timeout(tmp_path: Path) -> None:
@@ -159,6 +169,7 @@ def test_stop_kills_after_timeout(tmp_path: Path) -> None:
     assert process.killed is True
     assert status.state == RunnerState.IDLE
     assert status.returncode == -9
+    assert runner._reader_thread is None
 
 
 def test_run_timeout_is_counted(tmp_path: Path) -> None:
@@ -179,3 +190,28 @@ def test_run_timeout_is_counted(tmp_path: Path) -> None:
     assert status.state == RunnerState.ERROR
     assert status.errors == 1
     assert status.last_error == "RUN_TIMEOUT"
+    assert status.metrics.runs_total == 1
+    assert status.metrics.runs_fail == 1
+    assert status.metrics.errors_total == 1
+    assert runner._reader_thread is None
+
+
+def test_status_exposes_current_uptime_and_history(tmp_path: Path) -> None:
+    now = [10.0]
+    process = FakeProcess(returncode=None)
+    runner = CodexProcessRunner(
+        ["codex"],
+        tmp_path / "agent.log",
+        popen_factory=lambda *a, **k: process,
+        clock=lambda: now[0],
+    )
+
+    started = runner.start(tmp_path / "AI_TODO.md")
+    now[0] = 12.5
+    status = runner.status()
+
+    assert started.uptime_seconds == 0.0
+    assert status.uptime_seconds == 2.5
+    assert status.duration_seconds == 2.5
+    assert status.metrics.runs_total == 1
+    assert any("started pid=123" in event for event in status.history)

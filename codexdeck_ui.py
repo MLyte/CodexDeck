@@ -56,6 +56,34 @@ def truncate(text: str, width: int) -> str:
     return text[: width - 3] + "..."
 
 
+def _pad_line(text: str, width: int) -> str:
+    return truncate(text, width).ljust(width)
+
+
+def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: bool) -> str:
+    width = max(1, width)
+    height = max(1, height)
+    lines = [
+        "CodexDeck compact mode",
+        f"Status: {status.state} | Model: {status.model} | Errors: {status.errors}",
+        f"Last run: {status.last_run}",
+        "Commands: r run | s stop | l reload | h/? help | q quit",
+    ]
+    if show_help:
+        lines.extend(
+            [
+                "",
+                "Help",
+                "r start Codex, s stop current run, l reload AI_TODO.md",
+                "h/? toggle this help, q quit",
+            ]
+        )
+    lines = lines[:height]
+    while len(lines) < height:
+        lines.append("")
+    return "\n".join(_pad_line(line, width) for line in lines)
+
+
 def render_frame(
     *,
     tasks: Iterable[RenderTask],
@@ -64,7 +92,11 @@ def render_frame(
     width: int,
     height: int,
     ascii_borders: bool = False,
+    show_help: bool = False,
 ) -> str:
+    if width < 80 or height < 20:
+        return _compact_frame(status=status, width=width, height=height, show_help=show_help)
+
     width = max(40, width)
     height = max(8, height)
     borders = ASCII_BORDERS if ascii_borders else UNICODE_BORDERS
@@ -84,7 +116,10 @@ def render_frame(
         borders["v"]
         + truncate("AI_TODO.md", left_width).center(left_width)
         + borders["v"]
-        + truncate("Codex Output", right_width).center(right_width)
+        + truncate(
+            "Help: h/? | Run: r | Stop: s | Reload: l | Quit: q" if show_help else "Codex Output",
+            right_width,
+        ).center(right_width)
         + borders["v"]
     )
 

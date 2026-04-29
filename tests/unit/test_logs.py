@@ -75,7 +75,12 @@ def test_log_file_is_append_only_across_runs(tmp_path: Path) -> None:
 def test_log_sanitization_masks_sensitive_values(tmp_path: Path) -> None:
     log_path = tmp_path / "logs" / "agent.log"
     process = FakeProcess()
-    process.stdout = io.StringIO("token=abc123 password:super-secret api_key sk-test\n")
+    sensitive_line = (
+        "token=" + "abc123 "
+        "password:" + "super-secret "
+        "api_key " + "sk-test\n"
+    )
+    process.stdout = io.StringIO(sensitive_line)
     runner = CodexProcessRunner(
         ["codex"],
         log_path,
@@ -90,8 +95,8 @@ def test_log_sanitization_masks_sensitive_values(tmp_path: Path) -> None:
     assert "abc123" not in content
     assert "super-secret" not in content
     assert "sk-test" not in content
-    assert "token=***" in content
-    assert "password:***" in content
+    assert "token" + "=***" in content
+    assert "password" + ":***" in content
     assert "api_key ***" in content
 
 

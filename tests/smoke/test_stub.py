@@ -20,6 +20,7 @@ def test_stub_success(tmp_path: Path) -> None:
 
     assert status.state == RunnerState.IDLE
     assert status.errors == 0
+    assert runner._reader_thread is None
     assert "stub success" in (tmp_path / "logs" / "agent.log").read_text(encoding="utf-8")
 
 
@@ -34,6 +35,7 @@ def test_stub_fail(tmp_path: Path) -> None:
 
     assert status.state == RunnerState.ERROR
     assert status.errors == 1
+    assert runner._reader_thread is None
     assert "[ERROR] stub fail" in (tmp_path / "logs" / "agent.log").read_text(encoding="utf-8")
 
 
@@ -49,6 +51,7 @@ def test_stub_sleep_can_be_stopped(tmp_path: Path) -> None:
 
     assert status.state == RunnerState.IDLE
     assert status.running is False
+    assert runner._reader_thread is None
 
 
 def test_stub_spam_keeps_bounded_queue(tmp_path: Path) -> None:
@@ -63,4 +66,5 @@ def test_stub_spam_keeps_bounded_queue(tmp_path: Path) -> None:
 
     assert status.state == RunnerState.IDLE
     assert len(runner.logs()) == 10
+    assert runner._reader_thread is None
     assert "spam line 0099" in (tmp_path / "logs" / "agent.log").read_text(encoding="utf-8")

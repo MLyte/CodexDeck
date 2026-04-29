@@ -41,9 +41,39 @@ def test_render_supports_ascii_borders() -> None:
         logs=["log"],
         status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
         width=80,
-        height=10,
+        height=20,
         ascii_borders=True,
     )
 
     assert frame.splitlines()[0].startswith("+")
     assert "\u250c" not in frame
+
+
+def test_render_uses_compact_mode_for_small_terminal() -> None:
+    frame = render_frame(
+        tasks=[Task("task")],
+        logs=["log"],
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
+        width=79,
+        height=10,
+    )
+
+    lines = frame.splitlines()
+    assert len(lines) == 10
+    assert all(len(line) == 79 for line in lines)
+    assert "compact mode" in frame
+    assert "r run" in frame
+
+
+def test_render_compact_help_is_non_blocking_text() -> None:
+    frame = render_frame(
+        tasks=[],
+        logs=[],
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
+        width=50,
+        height=8,
+        show_help=True,
+    )
+
+    assert "Help" in frame
+    assert "h/? toggle" in frame

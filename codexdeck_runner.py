@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Deque, Iterable, Optional, Protocol, Sequence, TextIO
+from typing import Callable, Deque, Optional, Protocol, Sequence, TextIO
 
 
 SENSITIVE_KEYS = ("token", "api_key", "apikey", "password", "secret")
@@ -58,6 +58,14 @@ PopenFactory = Callable[..., ProcessHandle]
 
 
 @dataclass(frozen=True)
+class RunMetrics:
+    runs_total: int
+    runs_success: int
+    runs_fail: int
+    errors_total: int
+
+
+@dataclass(frozen=True)
 class RunStatus:
     state: RunnerState
     run_id: Optional[str]
@@ -66,6 +74,10 @@ class RunStatus:
     errors: int
     last_error: Optional[str]
     running: bool
+    uptime_seconds: Optional[float]
+    duration_seconds: Optional[float]
+    metrics: RunMetrics
+    history: tuple[str, ...]
 
 
 class BoundedLogBuffer:
@@ -172,10 +184,16 @@ class CodexProcessRunner:
         self._reader_thread: Optional[threading.Thread] = None
         self._run_id: Optional[str] = None
         self._started_at: Optional[float] = None
+        self._finished_at: Optional[float] = None
+        self._run_history: Deque[str] = deque(maxlen=50)
         self._state = RunnerState.IDLE
         self._returncode: Optional[int] = None
         self.errors = 0
         self.last_error: Optional[str] = None
+        self._runs_total = 0
+        self._runs_success = 0
+        self._runs_fail = 0
+        self._errors_total = 0
 
     def start(self, todo_path: str | os.PathLike[str]) -> RunStatus:
         with self._lock:
@@ -187,6 +205,8 @@ class CodexProcessRunner:
             self.last_error = None
             self._run_id = uuid.uuid4().hex
             self._started_at = self._clock()
+            self._finished_at = None
+            self._run_history.clear()
             try:
                 args = build_command(self.command, todo_path)
                 process = self._popen_factory(
@@ -197,15 +217,16 @@ class CodexProcessRunner:
                     bufsize=1,
                 )
             except Exception as exc:
-                self.errors += 1
+                self._record_error_locked()
                 self.last_error = f"POPEN_FAILED: {exc}"
                 self._state = RunnerState.ERROR
-                self._emit(f"[ERROR] {self.last_error}")
+                self._record_event_locked(f"error {self.last_error}")
                 return self.status()
 
             self._process = process
+            self._runs_total += 1
             self._state = RunnerState.RUNNING
-            self._emit(f"[INFO] run {self._run_id} started pid={process.pid}")
+            self._record_event_locked(f"started pid={process.pid}")
             self._reader_thread = threading.Thread(
                 target=self._read_stdout,
                 args=(self._run_id, process),
@@ -222,7 +243,7 @@ class CodexProcessRunner:
             process = self._process
             assert process is not None
             self._state = RunnerState.STOPPING
-            self._emit(f"[INFO] run {self._run_id} stopping")
+            self._record_event_locked("stopping")
             process.terminate()
 
         killed = False
@@ -230,7 +251,8 @@ class CodexProcessRunner:
             returncode = process.wait(timeout=self.stop_timeout)
         except subprocess.TimeoutExpired:
             killed = True
-            self._emit(f"[WARN] stop timeout after {self.stop_timeout:.3f}s; killing process")
+            with self._lock:
+                self._record_event_locked(f"stop timeout after {self.stop_timeout:.3f}s; killing process", level="WARN")
             process.kill()
             returncode = process.wait(timeout=None)
 
@@ -240,7 +262,8 @@ class CodexProcessRunner:
             self._process = None
             self._state = RunnerState.IDLE
             suffix = " after kill" if killed else ""
-            self._emit(f"[INFO] run {self._run_id} stopped rc={returncode}{suffix}")
+            self._finished_at = self._clock()
+            self._record_event_locked(f"stopped rc={returncode}{suffix}")
             return self.status()
 
     def wait(self, timeout: Optional[float] = None) -> RunStatus:
@@ -271,10 +294,11 @@ class CodexProcessRunner:
                 and self._clock() - self._started_at >= self.run_timeout
             ):
                 self.last_error = "RUN_TIMEOUT"
-                self.errors += 1
-                self._emit("[ERROR] RUN_TIMEOUT")
+                self._record_error_locked()
+                self._record_event_locked("RUN_TIMEOUT", level="ERROR")
                 self.stop()
                 self._state = RunnerState.ERROR
+                self._record_failed_run_locked()
             return RunStatus(
                 state=self._state,
                 run_id=self._run_id,
@@ -283,6 +307,15 @@ class CodexProcessRunner:
                 errors=self.errors,
                 last_error=self.last_error,
                 running=self._is_running_locked(),
+                uptime_seconds=self._uptime_locked(),
+                duration_seconds=self._duration_locked(),
+                metrics=RunMetrics(
+                    runs_total=self._runs_total,
+                    runs_success=self._runs_success,
+                    runs_fail=self._runs_fail,
+                    errors_total=self._errors_total,
+                ),
+                history=tuple(self._run_history),
             )
 
     def logs(self) -> list[str]:
@@ -294,12 +327,16 @@ class CodexProcessRunner:
     def _finish_from_returncode_locked(self, returncode: int) -> None:
         if returncode == 0:
             self._state = RunnerState.IDLE
-            self._emit(f"[INFO] run {self._run_id} finished rc=0")
+            self._finished_at = self._clock()
+            self._runs_success += 1
+            self._record_event_locked("finished rc=0")
             return
-        self.errors += 1
+        self._record_error_locked()
         self.last_error = f"PROCESS_EXIT_NON_ZERO: {returncode}"
         self._state = RunnerState.ERROR
-        self._emit(f"[ERROR] run {self._run_id} finished rc={returncode}")
+        self._finished_at = self._clock()
+        self._record_failed_run_locked()
+        self._record_event_locked(f"finished rc={returncode}", level="ERROR")
 
     def _finalize_if_exited_locked(self) -> None:
         if self._process is None:
@@ -316,7 +353,13 @@ class CodexProcessRunner:
         thread = self._reader_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=1.0)
-        self._reader_thread = None
+        if thread is not None and thread.is_alive():
+            stdout = self._process.stdout if self._process is not None else None
+            if stdout is not None and not stdout.closed:
+                stdout.close()
+            thread.join(timeout=1.0)
+        if thread is None or not thread.is_alive():
+            self._reader_thread = None
 
     def _read_stdout(self, run_id: str, process: ProcessHandle) -> None:
         stdout = process.stdout
@@ -335,3 +378,28 @@ class CodexProcessRunner:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         with self.log_path.open("a", encoding="utf-8") as log_file:
             log_file.write(stamped + "\n")
+
+    def _uptime_locked(self) -> Optional[float]:
+        if self._started_at is None or not self._is_running_locked():
+            return None
+        return max(0.0, self._clock() - self._started_at)
+
+    def _duration_locked(self) -> Optional[float]:
+        if self._started_at is None:
+            return None
+        if self._finished_at is not None:
+            return max(0.0, self._finished_at - self._started_at)
+        if self._is_running_locked():
+            return max(0.0, self._clock() - self._started_at)
+        return None
+
+    def _record_error_locked(self) -> None:
+        self.errors += 1
+        self._errors_total += 1
+
+    def _record_failed_run_locked(self) -> None:
+        self._runs_fail += 1
+
+    def _record_event_locked(self, event: str, *, level: str = "INFO") -> None:
+        self._run_history.append(event)
+        self._emit(f"[{level}] run {self._run_id} {event}")
