@@ -572,7 +572,8 @@ class Cockpit:
             args = shlex_split(command)
         except ValueError:
             return command
-        if len(args) < 2 or args[0] != "codex" or args[1] != "exec":
+        executable = Path(args[0]).name.lower() if args else ""
+        if len(args) < 2 or executable not in {"codex", "codex.exe"} or args[1] != "exec":
             return command
         if "--model" in args or "-m" in args:
             return command
@@ -584,7 +585,8 @@ class Cockpit:
             args = shlex_split(command)
         except ValueError:
             return command
-        if len(args) < 2 or args[0] != "codex" or args[1] != "exec":
+        executable = Path(args[0]).name.lower() if args else ""
+        if len(args) < 2 or executable not in {"codex", "codex.exe"} or args[1] != "exec":
             return command
         if "--skip-git-repo-check" in args:
             return command

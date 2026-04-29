@@ -141,7 +141,7 @@ def build_command(command: str | Sequence[str], todo_path: str | os.PathLike[str
         marked = command.replace("{todo}", marker).replace("$TODO", marker).replace("%TODO%", marker)
         args = [
             part.replace(marker, todo)
-            for part in shlex.split(marked, posix=os.name != "nt")
+            for part in shlex.split(marked, posix=True)
         ]
     else:
         has_placeholder = any(
@@ -234,6 +234,8 @@ class CodexProcessRunner:
                     "stderr": subprocess.STDOUT,
                     "stdin": subprocess.PIPE if stdin_prompt is not None else subprocess.DEVNULL,
                     "text": True,
+                    "encoding": "utf-8",
+                    "errors": "replace",
                     "bufsize": 1,
                 }
                 if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):

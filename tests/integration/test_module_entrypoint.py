@@ -86,6 +86,7 @@ def test_installed_console_script_uses_launch_cwd(tmp_path) -> None:
         [str(codexdeck_exe), "--print-config"],
         cwd=launch_dir,
         env={
+            **os.environ,
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "utf-8",
             "CODEX_CMD": "codex {todo}",
