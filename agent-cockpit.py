@@ -160,6 +160,8 @@ class Cockpit:
                 model=self.model,
                 last_run=self.last_run,
                 errors=runner_status.errors,
+                uptime_seconds=getattr(runner_status, "uptime_seconds", None),
+                duration_seconds=getattr(runner_status, "duration_seconds", None),
             ),
             width=width,
             height=height,
@@ -207,7 +209,13 @@ class Cockpit:
 
 
 def main() -> None:
-    config = CockpitConfig.from_env(base_dir=Path.cwd())
+    try:
+        config = CockpitConfig.from_env(base_dir=Path.cwd())
+    except ConfigError as exc:
+        print(f"Config error [{exc.error_code.value}]: {exc.message}", file=sys.stderr)
+        if exc.cause is not None:
+            print(f"Cause: {exc.cause}", file=sys.stderr)
+        raise SystemExit(2) from exc
     cockpit = Cockpit(config=config)
     cockpit.loop()
 

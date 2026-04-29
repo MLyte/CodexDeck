@@ -74,7 +74,7 @@
 - [ ] B02 [P2][V2] Ajouter un fichier `codexdeck.conf` optionnel, priorités: CLI > env > défaut.
 - [x] B03 [P1][MVP] Ajouter une commande `--print-config` masquant les valeurs sensibles et affichant les chemins résolus.
 - [x] B04 [P0][MVP] Centraliser la config dans une dataclass `CockpitConfig` validée au démarrage (`todo_path`, `log_path`, `codex_cmd`, `model`, `run_timeout`, `stop_timeout`, `refresh_hz`, `max_log_lines`).
-- [ ] B05 [P0][MVP] Refuser une config invalide avec message utilisateur clair avant de démarrer la TUI.
+- [x] B05 [P0][MVP] Refuser une config invalide avec message utilisateur clair avant de démarrer la TUI.
 
 ### C) Parsing des tâches [P0][MVP]
 - [x] C01 [P0][MVP] Rendre le parser compatible avec `- [ ]`, `* [x]`, indents et sections.
@@ -124,7 +124,7 @@
 
 ### K) Logs live et file [P0][MVP]
 - [x] K01 [P0][MVP] Maintenir une queue thread-safe + limite de taille (éviter fuite mémoire).
-- [ ] K02 [P0][MVP] Troncature visuelle propre côté TUI selon largeur.
+- [x] K02 [P0][MVP] Troncature visuelle propre côté TUI selon largeur.
 - [x] K03 [P0][MVP] Enregistrer les logs avec horodatage dans `logs/agent.log` en mode append.
 - [x] K04 [P1][MVP] Sanitiser les logs avant écriture fichier (masquer `token`, `api_key`, `password`, `secret`).
 
@@ -141,8 +141,8 @@
 - [x] M05 [P1][MVP] Dégrader proprement le rendu sous taille minimale (`<80x20`): message compact + status + commandes essentielles.
 
 ### N) Rendu panneaux [P0][MVP]
-- [ ] N01 [P0][MVP] Corriger les largeurs avec bordures stables (pas de caractères parasites).
-- [ ] N02 [P0][MVP] Afficher titres, séparateur, et status bar au format stable.
+- [x] N01 [P0][MVP] Corriger les largeurs avec bordures stables (pas de caractères parasites).
+- [x] N02 [P0][MVP] Afficher titres, séparateur, et status bar au format stable.
 - [ ] N03 [P1][MVP] Ajouter compteur de lignes visibles + mode défilement.
 - [x] N04 [P0][MVP] Ajouter mode rendu ASCII fallback (`+---+`) si le terminal ne supporte pas correctement les bordures Unicode.
 - [x] N05 [P1][MVP] Tester rendu 80x24, 100x30, 120x40 et fenêtre redimensionnée, sans chevauchement ni ligne plus longue que la largeur.
@@ -194,7 +194,7 @@
 ### U) Qualité code [P1][MVP]
 - [x] U01 [P0][MVP] Refactor en couches testables `core` + `runner` + `ui` + `io` — AC: parser, commande, runner et rendu sont appelables sans terminal interactif.
 - [ ] U02 [P1][MVP] Ajouter docstrings et annotations de type essentielles — AC: les interfaces publiques (`Config`, `Task`, `Runner`, `Cockpit`) sont typées.
-- [ ] U03 [P1][MVP] Rendre les dépendances injectables — AC: horloge, filesystem, env, terminal size, key reader et `Popen` sont remplaçables en test.
+- [x] U03 [P1][MVP] Rendre les dépendances injectables — AC: horloge, filesystem, env, terminal size, key reader et `Popen` sont remplaçables en test.
 - [ ] U04 [P2][V2] Nettoyage dette actuelle (`_truncate`, noms variables, séparation responsabilités) — AC: aucune logique process dans le rendu UI.
 
 ### V) Résilience UX [P1][V2]
@@ -237,7 +237,7 @@
 
 ### Backend DoD MVP
 - [x] BD01 [P0][MVP] Tous les composants core sont testables sans terminal interactif et sans process Codex réel.
-- [ ] BD02 [P0][MVP] Les erreurs utilisateur ont un `error_code`, un message court, et une cause technique loggée.
+- [x] BD02 [P0][MVP] Les erreurs utilisateur ont un `error_code`, un message court, et une cause technique loggée.
 - [x] BD03 [P0][MVP] Aucun thread lancé par un run ne reste vivant après `stop`, timeout ou fin normale.
 - [x] BD04 [P0][MVP] Les tests couvrent parser, config, command builder, state machine, process runner, log queue.
 

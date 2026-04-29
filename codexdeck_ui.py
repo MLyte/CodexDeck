@@ -17,6 +17,8 @@ class RenderStatus:
     model: str
     last_run: str
     errors: int
+    uptime_seconds: float | None = None
+    duration_seconds: float | None = None
 
 
 UNICODE_BORDERS = {
@@ -56,6 +58,19 @@ def truncate(text: str, width: int) -> str:
     return text[: width - 3] + "..."
 
 
+def format_duration(seconds: float | None) -> str:
+    if seconds is None:
+        return "-"
+    seconds = max(0, int(seconds))
+    minutes, secs = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
 def _pad_line(text: str, width: int) -> str:
     return truncate(text, width).ljust(width)
 
@@ -65,8 +80,8 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
     height = max(1, height)
     lines = [
         "CodexDeck compact mode",
-        f"Status: {status.state} | Model: {status.model} | Errors: {status.errors}",
-        f"Last run: {status.last_run}",
+        f"Status: {status.state} | Model: {status.model} | Up: {format_duration(status.uptime_seconds)} | Errors: {status.errors}",
+        f"Last run: {status.last_run} | Dur: {format_duration(status.duration_seconds)}",
         "Commands: r run | s stop | l reload | h/? help | q quit",
     ]
     if show_help:
@@ -148,7 +163,8 @@ def render_frame(
     )
     status_text = (
         f"Status: {status.state:<8} | Model: {status.model:<7} | "
-        f"Last run: {status.last_run:<5} | Errors: {status.errors:<3}"
+        f"Last run: {status.last_run:<5} | Up: {format_duration(status.uptime_seconds):<6} | "
+        f"Dur: {format_duration(status.duration_seconds):<6} | Errors: {status.errors:<3}"
     )
     rendered.append(
         borders["v"]
