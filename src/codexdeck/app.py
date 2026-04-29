@@ -326,6 +326,7 @@ class Cockpit:
 
     def _start_codex(self) -> None:
         try:
+            previous_session_ready = bool(getattr(self.runner.status(), "codex_session_ready", False))
             self._run_prompt = None
             self._answered_run_prompt = None
             self._run_prompt_can_answer = False
@@ -342,14 +343,19 @@ class Cockpit:
             self._apply_effective_command()
             status = self.runner.start(self.todo_path)
             self.last_run = time.strftime("%H:%M:%S")
+            session_reused = bool(getattr(status, "codex_session_reused", False))
+            session_note = "Resuming the warm Codex session." if session_reused else "Starting a new Codex session."
             self.runner.log_buffer.append(f"> Target task: {self.active_task_label}")
             self.runner.log_buffer.append(
-                f"> Run started. {self.agent_label} is processing AI_TODO.md "
+                f"> Run started. {session_note} {self.agent_label} is processing AI_TODO.md "
                 f"with model {self._effective_model()} and permission {self.permission}."
             )
+            if previous_session_ready and not session_reused:
+                self.runner.log_buffer.append("> Previous Codex session could not be reused for this command.")
             self._record_user_event(
                 f"run started | target={self.active_task_label} | model={self._effective_model()} | "
-                f"fast={self.fast_mode} | permission={self.permission} | run_id={getattr(status, 'run_id', '-')}"
+                f"fast={self.fast_mode} | permission={self.permission} | "
+                f"session={'resumed' if session_reused else 'new'} | run_id={getattr(status, 'run_id', '-')}"
             )
         except ProcessAlreadyRunning:
             self.runner.log_buffer.append("> A run is already active.")
@@ -381,6 +387,7 @@ class Cockpit:
                 message=self._activity_message(runner_status),
                 prompt=self._run_prompt or "",
                 prompt_can_answer=self._run_prompt_can_answer,
+                session=self._session_label(runner_status),
             ),
             width=width,
             height=height,
@@ -413,6 +420,8 @@ class Cockpit:
             text = self.task_input_buffer or " "
             return f"New task: {text} | Ctrl-S save, Esc cancel, Backspace edit."
         if self.auto_mode:
+            if runs_total == 0:
+                return "Auto mode armed. Press r to start and continue checked-off tasks."
             return "Auto mode on. Successful runs continue with the next checked-off task."
         if not self.todo_path.exists():
             return "AI_TODO.md not found. Press n to add the first task."
@@ -429,10 +438,23 @@ class Cockpit:
         if runs_total == 0:
             return f"Ready. Press r to start {self.agent_label}."
         if returncode == 0:
+            if bool(getattr(status, "codex_session_ready", False)):
+                return "OK. Codex session is warm for the next task."
             return f"OK on {self.last_task_label or self.active_task_label}."
         if returncode is not None:
             return f"Last run exited with code {returncode}."
         return f"Ready. Press r to restart {self.agent_label}."
+
+    @staticmethod
+    def _session_label(status: RunStatus) -> str:
+        if bool(getattr(status, "codex_session_reused", False)):
+            return "resumed"
+        if bool(getattr(status, "codex_session_ready", False)):
+            return "warm"
+        metrics = getattr(status, "metrics", None)
+        if getattr(metrics, "runs_total", 0) == 0:
+            return "not started"
+        return "new"
 
     @staticmethod
     def _status_running(status: RunStatus) -> bool:
@@ -871,7 +893,10 @@ class Cockpit:
         else:
             self._last_auto_task_id = ""
         state = "on" if self.auto_mode else "off"
-        self.runner.log_buffer.append(f"> Auto mode {state}.")
+        if self.auto_mode:
+            self.runner.log_buffer.append("> Auto mode on. Press r to start the first run.")
+        else:
+            self.runner.log_buffer.append("> Auto mode off.")
         self._record_user_event(f"auto mode {state}")
 
     def _maybe_start_next_auto_run(self, status: RunStatus) -> None:

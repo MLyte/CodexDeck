@@ -16,6 +16,29 @@ from typing import Callable, Deque, Optional, Protocol, Sequence, TextIO
 
 
 SENSITIVE_KEYS = ("token", "api_key", "apikey", "password", "secret")
+CODEX_EXEC_OPTIONS_WITH_VALUE = {
+    "-c",
+    "--config",
+    "-i",
+    "--image",
+    "-m",
+    "--model",
+    "--local-provider",
+    "-p",
+    "--profile",
+    "-s",
+    "--sandbox",
+    "-C",
+    "--cd",
+    "--add-dir",
+    "--output-schema",
+    "--color",
+    "-o",
+    "--output-last-message",
+    "--enable",
+    "--disable",
+}
+CODEX_EXEC_PERSISTENCE_BLOCKERS = {"--ephemeral"}
 
 
 class RunnerState(str, Enum):
@@ -83,6 +106,8 @@ class RunStatus:
     duration_seconds: Optional[float]
     metrics: RunMetrics
     history: tuple[str, ...]
+    codex_session_ready: bool = False
+    codex_session_reused: bool = False
 
 
 class BoundedLogBuffer:
@@ -177,6 +202,56 @@ def split_codex_exec_stdin_prompt(args: Sequence[str]) -> tuple[list[str], Optio
     return [*prepared[:-1], "-"], prepared[-1]
 
 
+def _codex_exec_prompt_index(args: Sequence[str]) -> Optional[int]:
+    if len(args) < 3:
+        return None
+    executable = Path(args[0]).name.lower()
+    if executable not in {"codex", "codex.exe"} or args[1] != "exec":
+        return None
+
+    index = 2
+    while index < len(args):
+        arg = args[index]
+        if arg == "-":
+            return index
+        if arg == "--":
+            return index + 1 if index + 1 < len(args) else None
+        if not arg.startswith("-"):
+            return index
+        if arg in CODEX_EXEC_OPTIONS_WITH_VALUE:
+            index += 2
+            continue
+        index += 1
+    return None
+
+
+def supports_codex_exec_resume(args: Sequence[str]) -> bool:
+    prompt_index = _codex_exec_prompt_index(args)
+    if prompt_index is None or prompt_index != len(args) - 1 or args[prompt_index] != "-":
+        return False
+    if any(
+        arg == blocker or arg.startswith(f"{blocker}=")
+        for arg in args[2:prompt_index]
+        for blocker in CODEX_EXEC_PERSISTENCE_BLOCKERS
+    ):
+        return False
+    return True
+
+
+def build_codex_exec_resume_command(args: Sequence[str]) -> list[str]:
+    prompt_index = _codex_exec_prompt_index(args)
+    if prompt_index is None:
+        return list(args)
+    return [*args[:prompt_index], "resume", "--last", *args[prompt_index:]]
+
+
+def codex_exec_session_key(args: Sequence[str]) -> tuple[str, ...] | None:
+    prompt_index = _codex_exec_prompt_index(args)
+    if prompt_index is None:
+        return None
+    return tuple(args[:prompt_index])
+
+
 class CodexProcessRunner:
     def __init__(
         self,
@@ -213,6 +288,11 @@ class CodexProcessRunner:
         self._runs_success = 0
         self._runs_fail = 0
         self._errors_total = 0
+        self._can_resume_codex_session = False
+        self._active_run_can_resume_codex_session = False
+        self._active_run_reused_codex_session = False
+        self._codex_session_key: tuple[str, ...] | None = None
+        self._active_run_codex_session_key: tuple[str, ...] | None = None
 
     def start(self, todo_path: str | os.PathLike[str]) -> RunStatus:
         with self._lock:
@@ -229,6 +309,21 @@ class CodexProcessRunner:
             try:
                 args = build_command(self.command, todo_path)
                 args, stdin_prompt = split_codex_exec_stdin_prompt(args)
+                can_use_codex_resume = supports_codex_exec_resume(args)
+                session_key = codex_exec_session_key(args)
+                self._active_run_can_resume_codex_session = can_use_codex_resume
+                self._active_run_codex_session_key = session_key
+                self._active_run_reused_codex_session = (
+                    can_use_codex_resume
+                    and self._can_resume_codex_session
+                    and session_key == self._codex_session_key
+                )
+                if not self._active_run_reused_codex_session:
+                    self._can_resume_codex_session = False
+                    if session_key != self._codex_session_key:
+                        self._codex_session_key = None
+                if self._active_run_reused_codex_session:
+                    args = build_codex_exec_resume_command(args)
                 popen_kwargs: dict[str, object] = {
                     "stdout": subprocess.PIPE,
                     "stderr": subprocess.STDOUT,
@@ -245,6 +340,9 @@ class CodexProcessRunner:
                     process.stdin.write(stdin_prompt)
                     process.stdin.close()
             except Exception as exc:
+                self._active_run_can_resume_codex_session = False
+                self._active_run_reused_codex_session = False
+                self._active_run_codex_session_key = None
                 self._record_error_locked()
                 self.last_error = f"POPEN_FAILED: {exc}"
                 self._state = RunnerState.ERROR
@@ -327,6 +425,11 @@ class CodexProcessRunner:
             else:
                 suffix = ""
             self._finished_at = self._clock()
+            if self._active_run_can_resume_codex_session:
+                self._can_resume_codex_session = False
+                self._active_run_reused_codex_session = False
+                self._codex_session_key = None
+                self._active_run_codex_session_key = None
             self._record_event_locked(f"stopped rc={returncode}{suffix}")
             return self.status()
 
@@ -380,6 +483,8 @@ class CodexProcessRunner:
                     errors_total=self._errors_total,
                 ),
                 history=tuple(self._run_history),
+                codex_session_ready=self._can_resume_codex_session,
+                codex_session_reused=self._active_run_reused_codex_session,
             )
 
     def logs(self) -> list[str]:
@@ -413,8 +518,16 @@ class CodexProcessRunner:
             self._state = RunnerState.IDLE
             self._finished_at = self._clock()
             self._runs_success += 1
+            if self._active_run_can_resume_codex_session:
+                self._can_resume_codex_session = True
+                self._codex_session_key = self._active_run_codex_session_key
             self._record_event_locked("finished rc=0")
             return
+        if self._active_run_can_resume_codex_session:
+            self._can_resume_codex_session = False
+            self._codex_session_key = None
+        self._active_run_reused_codex_session = False
+        self._active_run_codex_session_key = None
         self._record_error_locked()
         self.last_error = f"PROCESS_EXIT_NON_ZERO: {returncode}"
         self._state = RunnerState.ERROR

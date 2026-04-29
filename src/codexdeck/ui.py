@@ -29,6 +29,7 @@ class RenderStatus:
     message: str = ""
     prompt: str = ""
     prompt_can_answer: bool = False
+    session: str = "batch"
 
 
 UNICODE_BORDERS = {
@@ -119,6 +120,34 @@ def _wrap_task_text(prefix: str, text: str, width: int) -> list[str]:
     return lines
 
 
+def _wrap_output_lines(lines: Iterable[str], width: int, max_lines: int) -> list[str]:
+    if max_lines <= 0:
+        return []
+    wrapped: list[str] = []
+    for line in lines:
+        clean = clean_terminal_text(line)
+        line_parts = wrap(
+            clean,
+            width=max(1, width),
+            break_long_words=True,
+            break_on_hyphens=False,
+        ) or [""]
+        wrapped.extend(truncate(part, width) for part in line_parts)
+    return wrapped[-max_lines:]
+
+
+def _task_content_height(tasks: list[RenderTask], width: int, fallback_hint: Iterable[str]) -> int:
+    if width <= 0:
+        return 1
+    if not tasks:
+        return max(1, len(list(fallback_hint)))
+    total = 0
+    for task in tasks:
+        checkbox = "[x]" if task.done else "[ ]"
+        total += len(_wrap_task_text(f" {checkbox} ", task.text, width))
+    return max(1, total)
+
+
 def clamp_task_offset(task_count: int, visible_count: int, offset: int) -> int:
     if task_count <= 0 or visible_count <= 0:
         return 0
@@ -139,7 +168,7 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
     width = max(1, width)
     height = max(1, height)
     compact_keys = (
-        f"Keys: (r)un | (s)top | (k)skip | (q)uit | (e)dit | re(l)oad | (n)ew | (h)elp | {version_text}"
+        f"Keys: (r)un | Aut(o) | (s)top | (k)skip | (q)uit | (e)dit | re(l)oad | (n)ew | (h)elp | {version_text}"
     )
     if show_help:
         lines = [
@@ -166,6 +195,7 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
             f"(M)odel: {status.model} | (F)ast: {_on_off(status.fast_mode)} | "
             f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)}"
         ),
+        f"Session: {status.session}",
         f"Last run: {status.last_run}",
         compact_keys,
     ]
@@ -213,6 +243,8 @@ def render_frame(
     header_h = len(header_lines) + 1 if header_lines else 0
     prompt_h = 3 if status.prompt and not show_help else 0
     available_h = max(4, height - 11 - header_h - (prompt_h + 2 if prompt_h else 0))
+    task_list = list(tasks)
+    task_hint = list(task_panel_hint)
     if show_help:
         task_h = min(4, max(2, available_h // 3))
         summary_h = 1
@@ -226,13 +258,17 @@ def render_frame(
         task_h = max(min_task_h, min(8, available_h // 3 + 2))
         summary_h = min(3, max(1, available_h - task_h - 1))
         log_h = max(1, available_h - task_h - summary_h)
+    if not show_help:
+        desired_task_h = _task_content_height(task_list, content_width - 2, task_hint)
+        resized_task_h = max(1, min(task_h, desired_task_h))
+        log_h += task_h - resized_task_h
+        task_h = resized_task_h
 
     rendered: list[str] = []
     rendered.append(borders["tl"] + borders["h"] * content_width + borders["tr"])
     if header_lines:
         rendered.extend(borders["v"] + line.center(content_width) + borders["v"] for line in header_lines)
         rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
-    task_list = list(tasks)
     task_offset = clamp_task_offset(len(task_list), task_h, task_offset)
 
     rendered.append(
@@ -254,7 +290,7 @@ def render_frame(
         max_lines_for_task = max(1, remaining_rows - remaining_tasks)
         task_texts.extend(wrapped_task[:max_lines_for_task])
     if not task_texts:
-        task_texts = [truncate(line, content_width - 2) for line in task_panel_hint]
+        task_texts = [truncate(line, content_width - 2) for line in task_hint]
     while len(task_texts) < task_h:
         task_texts.append("")
     rendered.extend(borders["v"] + text.ljust(content_width) + borders["v"] for text in task_texts[:task_h])
@@ -262,8 +298,13 @@ def render_frame(
     rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
     output_title = "Codex Output"
     rendered.append(borders["v"] + truncate(output_title, content_width).center(content_width) + borders["v"])
-    output_lines = list(logs)[:log_h] if show_help else list(logs)[-log_h:]
-    log_texts = [truncate(line, content_width - 2) for line in output_lines]
+    output_width = content_width - 2
+    output_source = list(logs)
+    log_texts = (
+        [truncate(line, output_width) for line in output_source[:log_h]]
+        if show_help
+        else _wrap_output_lines(output_source, output_width, log_h)
+    )
     while len(log_texts) < log_h:
         if show_help:
             log_texts.append("")
@@ -311,10 +352,10 @@ def render_frame(
         )
     runtime_line = (
         f"(M)odel: {status.model} | (F)ast: {_on_off(status.fast_mode)} | "
-        f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)}"
+        f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)} | Session: {status.session}"
     )
     shortcuts_line = (
-        f"Keys: (r)un CodexDeck | (s)top | (k)skip | (q)uit | (e)dit | re(l)oad | (n)ew | "
+        f"Keys: (r)un CodexDeck | Aut(o) | (s)top | (k)skip | (q)uit | (e)dit | re(l)oad | (n)ew | "
         f"\u2191\u2193 scroll | (h)elp | v{status.version or '0.0.0'} | MIT"
     )
     rendered.append(borders["v"] + truncate(status_line, content_width).ljust(content_width) + borders["v"])

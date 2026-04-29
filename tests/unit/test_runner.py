@@ -13,8 +13,10 @@ from codexdeck_runner import (
     CodexProcessRunner,
     ProcessAlreadyRunning,
     RunnerState,
+    build_codex_exec_resume_command,
     build_command,
     split_codex_exec_stdin_prompt,
+    supports_codex_exec_resume,
 )
 
 
@@ -112,6 +114,26 @@ def test_split_codex_exec_stdin_prompt_keeps_existing_stdin_marker() -> None:
     assert stdin_prompt is None
 
 
+def test_codex_exec_resume_command_keeps_exec_options_before_resume() -> None:
+    args = ["codex", "exec", "--model", "gpt-5.4", "--skip-git-repo-check", "-"]
+
+    assert supports_codex_exec_resume(args) is True
+    assert build_codex_exec_resume_command(args) == [
+        "codex",
+        "exec",
+        "--model",
+        "gpt-5.4",
+        "--skip-git-repo-check",
+        "resume",
+        "--last",
+        "-",
+    ]
+
+
+def test_codex_exec_resume_is_disabled_for_ephemeral_sessions() -> None:
+    assert supports_codex_exec_resume(["codex", "exec", "--ephemeral", "-"]) is False
+
+
 def test_start_success_uses_popen_factory(tmp_path: Path) -> None:
     process = FakeProcess(stdout="hello\n", returncode=None)
     seen: dict[str, object] = {}
@@ -154,6 +176,69 @@ def test_start_sends_codex_exec_prompt_through_stdin(tmp_path: Path) -> None:
     assert seen["kwargs"]["stdin"] == subprocess.PIPE
     assert stdin.payload == f"Read {tmp_path / 'AI_TODO.md'}. Work on first task."
     assert stdin.closed is True
+
+
+def test_successful_codex_exec_run_warms_next_run_with_resume(tmp_path: Path) -> None:
+    processes = [
+        FakeProcess(stdout="first\n", returncode=None, stdin=FakeStdin()),
+        FakeProcess(stdout="second\n", returncode=None, stdin=FakeStdin()),
+    ]
+    seen_args: list[list[str]] = []
+
+    def factory(*args: object, **kwargs: object) -> FakeProcess:
+        seen_args.append(args[0])  # type: ignore[arg-type]
+        return processes.pop(0)
+
+    runner = CodexProcessRunner(
+        'codex exec --model gpt-5.4 --skip-git-repo-check "Read {todo}. Work on first task."',
+        tmp_path / "logs" / "agent.log",
+        popen_factory=factory,
+    )
+
+    first = runner.start(tmp_path / "AI_TODO.md")
+    runner.wait()
+    second = runner.start(tmp_path / "AI_TODO.md")
+
+    assert first.codex_session_reused is False
+    assert runner.status().codex_session_reused is True
+    assert second.codex_session_reused is True
+    assert seen_args[0] == ["codex", "exec", "--model", "gpt-5.4", "--skip-git-repo-check", "-"]
+    assert seen_args[1] == [
+        "codex",
+        "exec",
+        "--model",
+        "gpt-5.4",
+        "--skip-git-repo-check",
+        "resume",
+        "--last",
+        "-",
+    ]
+
+
+def test_codex_exec_resume_restarts_when_command_options_change(tmp_path: Path) -> None:
+    processes = [
+        FakeProcess(stdout="first\n", returncode=None, stdin=FakeStdin()),
+        FakeProcess(stdout="second\n", returncode=None, stdin=FakeStdin()),
+    ]
+    seen_args: list[list[str]] = []
+
+    def factory(*args: object, **kwargs: object) -> FakeProcess:
+        seen_args.append(args[0])  # type: ignore[arg-type]
+        return processes.pop(0)
+
+    runner = CodexProcessRunner(
+        'codex exec --model gpt-5.4 "Read {todo}."',
+        tmp_path / "logs" / "agent.log",
+        popen_factory=factory,
+    )
+
+    runner.start(tmp_path / "AI_TODO.md")
+    runner.wait()
+    runner.command = 'codex exec --model gpt-5.4-mini "Read {todo}."'
+    status = runner.start(tmp_path / "AI_TODO.md")
+
+    assert status.codex_session_reused is False
+    assert seen_args[1] == ["codex", "exec", "--model", "gpt-5.4-mini", "-"]
 
 
 def test_start_uses_batch_pipes_not_a_tty(tmp_path: Path) -> None:

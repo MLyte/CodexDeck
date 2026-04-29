@@ -41,6 +41,35 @@ def test_render_strips_ansi_logs_before_measuring_width() -> None:
     assert "\x1b[" not in frame
 
 
+def test_render_wraps_long_output_lines_without_expanding_footer() -> None:
+    frame = render_frame(
+        tasks=[Task("task")],
+        logs=[
+            "Codex output: La première tâche non cochée est faite et cochée dans AI_TODO.md. "
+            "Texte généré par le sub-agent, 30 mots exacts."
+        ],
+        status=RenderStatus(
+            state="IDLE",
+            model="normal",
+            last_run="12:00",
+            errors=0,
+            message="All tasks are checked. Add an open task, then press l.",
+        ),
+        width=80,
+        height=24,
+        summary_lines=[
+            "Target: line 7: Crée un agent et demande lui de me faire une histoire de 30 mots pour m'aider à tester.",
+            "Tasks: 5 done | 0 open | 5 total | Auto: off",
+            "Last run: 17:35:01 | Duration: 18s | Errors: 0",
+        ],
+    )
+
+    assert "La première tâche non cochée est faite et cochée dans" in frame
+    assert "AI_TODO.md. Texte généré par le sub-agent" in frame
+    assert "Status: IDLE" in frame
+    assert "(M)odel: normal" in frame
+
+
 def test_format_duration_is_compact() -> None:
     assert format_duration(None) == "-"
     assert format_duration(7.9) == "7s"
@@ -273,6 +302,23 @@ def test_render_wraps_very_long_task_in_full_width_todo_section() -> None:
     assert "..." not in "\n".join(lines[2:5])
 
 
+def test_render_shrinks_todo_section_when_tasks_need_fewer_rows() -> None:
+    frame = render_frame(
+        tasks=[Task("first"), Task("second")],
+        logs=[f"log line {index}" for index in range(12)],
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
+        width=100,
+        height=24,
+    )
+
+    lines = frame.splitlines()
+    todo_title_index = next(index for index, line in enumerate(lines) if "AI_TODO.md" in line)
+    output_title_index = next(index for index, line in enumerate(lines) if "Codex Output" in line)
+
+    assert output_title_index - todo_title_index == 4
+    assert "log line 0" in frame
+
+
 def test_render_task_offset_shows_scrolled_slice() -> None:
     frame = render_frame(
         tasks=[Task(f"task {index}") for index in range(25)],
@@ -363,10 +409,12 @@ def test_render_footer_lists_shortcuts_by_importance() -> None:
     assert "(F)ast: off" in runtime_line
     assert "(Pe)rm: default" in runtime_line
     assert "Aut(o): off" in runtime_line
+    assert "Session:" in runtime_line
     assert "Up:" not in runtime_line
     assert "Dur:" not in runtime_line
     assert "Err:" not in runtime_line
-    assert shortcuts_line.index("(r)un CodexDeck") < shortcuts_line.index("(s)top")
+    assert shortcuts_line.index("(r)un CodexDeck") < shortcuts_line.index("Aut(o)")
+    assert shortcuts_line.index("Aut(o)") < shortcuts_line.index("(s)top")
     assert shortcuts_line.index("(s)top") < shortcuts_line.index("(k)skip")
     assert shortcuts_line.index("(k)skip") < shortcuts_line.index("(q)uit")
     assert shortcuts_line.index("(q)uit") < shortcuts_line.index("(e)dit")
@@ -385,6 +433,26 @@ def test_render_footer_lists_shortcuts_by_importance() -> None:
     assert shortcuts_line.index("(h)elp") < shortcuts_line.index("v1.2.3")
     assert "v1.2.3 | MIT" in shortcuts_line
     assert shortcuts_line.index("v1.2.3") < shortcuts_line.index("MIT")
+
+
+def test_render_shows_warm_session_state() -> None:
+    frame = render_frame(
+        tasks=[Task("task")],
+        logs=[],
+        status=RenderStatus(
+            state="IDLE",
+            model="normal",
+            last_run="12:00",
+            errors=0,
+            message="OK. Codex session is warm for the next task.",
+            session="warm",
+        ),
+        width=110,
+        height=24,
+    )
+
+    assert "Codex session is warm" in frame
+    assert "Session: warm" in frame
 
 
 def test_render_uses_compact_mode_for_small_terminal() -> None:

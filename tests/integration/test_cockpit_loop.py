@@ -671,6 +671,29 @@ def test_auto_mode_starts_next_task_after_successful_checked_off_run(tmp_path: P
     assert "auto next task | target=line 2: second task" in user_log
 
 
+def test_auto_mode_can_be_armed_before_first_run(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    config = make_config(tmp_path)
+    config.todo_path.write_text("- [ ] first task\n- [ ] second task\n", encoding="utf-8")
+    runner = AutoCompletingRunner(todo_path=config.todo_path, mark_first_task_done=True)
+    key_reader = FakeKeyReader(["o", "r", None, "q", "y"])
+    frames: list[str] = []
+    cockpit = module.Cockpit(
+        config,
+        key_reader_factory=lambda: key_reader,
+        terminal_size=lambda: (120, 24),
+        sleeper=lambda _delay: None,
+        screen_writer=frames.append,
+        runner=runner,
+    )
+
+    cockpit.loop()
+
+    assert runner.started == 2
+    assert any("Auto mode on. Press r to start the first run." in line for line in runner.log_buffer.lines)
+    assert any("Auto mode armed. Press r to start" in frame for frame in frames)
+
+
 def test_repeated_run_key_is_ignored_while_running(tmp_path: Path) -> None:
     module = load_cockpit_module()
     runner = FakeRunner()
