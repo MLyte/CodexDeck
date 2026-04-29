@@ -116,7 +116,10 @@ class Cockpit:
 
     @staticmethod
     def _default_screen_writer(content: str) -> None:
-        print("\033[2J\033[H", end="")
+        if os.name == "nt":
+            os.system("cls")
+        else:
+            print("\033[2J\033[H", end="")
         print(content, end="", flush=True)
 
     def load_todo_if_changed(self, *, force: bool = False) -> None:
