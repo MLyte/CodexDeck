@@ -4,7 +4,16 @@ from dataclasses import dataclass
 
 import pytest
 
-from codexdeck_ui import clean_terminal_text, RenderStatus, clamp_task_offset, format_duration, render_frame, task_range_label, truncate
+from codexdeck_ui import (
+    clean_terminal_text,
+    RenderStatus,
+    clamp_task_offset,
+    detect_prompt_options,
+    format_duration,
+    render_frame,
+    task_range_label,
+    truncate,
+)
 
 
 @dataclass(frozen=True)
@@ -208,10 +217,17 @@ def test_render_shows_action_required_panel_when_prompt_is_present() -> None:
 
     assert "Action Required" in frame
     assert "Tu veux que je coche cette tache ?" in frame
-    assert "Answer: y yes | n no | Esc no | s stop" in frame
+    assert "Reply: 1 oui | 2 non | free answer | Enter send | Esc cancel" in frame
 
 
-def test_render_shows_non_interactive_codex_question_panel() -> None:
+def test_detect_prompt_options_finds_yes_no_and_either_or_questions() -> None:
+    assert detect_prompt_options("Do you want to continue? (y/n)") == ("yes", "no")
+    assert detect_prompt_options("Est-ce que je continue ?") == ("oui", "non")
+    assert detect_prompt_options("Ta couleur préférée est-elle le rouge ou le bleu ?") == ("rouge", "bleu")
+    assert detect_prompt_options("Question ouverte sans choix précis") == ()
+
+
+def test_render_shows_action_required_panel_for_completed_question() -> None:
     frame = render_frame(
         tasks=[Task("task")],
         logs=["Codex output line"],
@@ -221,15 +237,15 @@ def test_render_shows_non_interactive_codex_question_panel() -> None:
             last_run="12:00",
             errors=0,
             message="Codex asked a question.",
-            prompt="Est-ce que tu préfères rouge ou bleu ?",
+            prompt="Ta couleur préférée est-elle le rouge ou le bleu ?",
         ),
         width=100,
         height=24,
     )
 
-    assert "Question from Codex" in frame
-    assert "Est-ce que tu préfères rouge ou bleu ?" in frame
-    assert "Next: e edit TODO | r rerun | k skip" in frame
+    assert "Action Required" in frame
+    assert "Ta couleur préférée est-elle le rouge ou le bleu ?" in frame
+    assert "Reply: 1 rouge | 2 bleu | free answer | Enter send | Esc cancel" in frame
 
 
 def test_render_compact_mode_shows_prompt_before_keys() -> None:
@@ -250,7 +266,7 @@ def test_render_compact_mode_shows_prompt_before_keys() -> None:
     )
 
     assert "Action required: Do you want to continue? (y/n)" in frame
-    assert frame.index("Action required:") < frame.index("Keys:")
+    assert frame.index("Action required:") < frame.index("r:run")
 
 
 def test_render_empty_task_panel_hint_when_no_tasks() -> None:
@@ -380,7 +396,7 @@ def test_render_horizontal_layout_orders_todo_output_summary_and_status() -> Non
     summary_index = next(index for index, line in enumerate(lines) if "Task Summary" in line)
     status_index = next(index for index, line in enumerate(lines) if "Status: IDLE" in line)
     runtime_index = next(index for index, line in enumerate(lines) if "(M)odel: normal" in line)
-    shortcuts_index = next(index for index, line in enumerate(lines) if "Keys: (r)un CodexDeck" in line)
+    shortcuts_index = next(index for index, line in enumerate(lines) if "[r]run" in line)
 
     assert todo_index < output_index < summary_index < status_index
     assert runtime_index == status_index + 1
@@ -398,7 +414,7 @@ def test_render_footer_lists_shortcuts_by_importance() -> None:
     )
 
     lines = frame.splitlines()
-    shortcuts_line = next(line for line in lines if "Keys: (r)un CodexDeck" in line)
+    shortcuts_line = next(line for line in lines if "[r]run" in line)
     status_line = next(line for line in lines if "Status: IDLE" in line)
     runtime_line = next(line for line in lines if "(M)odel: normal" in line)
 
@@ -413,26 +429,51 @@ def test_render_footer_lists_shortcuts_by_importance() -> None:
     assert "Up:" not in runtime_line
     assert "Dur:" not in runtime_line
     assert "Err:" not in runtime_line
-    assert shortcuts_line.index("(r)un CodexDeck") < shortcuts_line.index("Aut(o)")
-    assert shortcuts_line.index("Aut(o)") < shortcuts_line.index("(s)top")
-    assert shortcuts_line.index("(s)top") < shortcuts_line.index("(k)skip")
-    assert shortcuts_line.index("(k)skip") < shortcuts_line.index("(q)uit")
-    assert shortcuts_line.index("(q)uit") < shortcuts_line.index("(e)dit")
-    assert shortcuts_line.index("(e)dit") < shortcuts_line.index("re(l)oad")
-    assert "(e)dit" in shortcuts_line
-    assert "re(l)oad" in shortcuts_line
-    assert "(n)ew" in shortcuts_line
+    assert shortcuts_line.index("[r]run") < shortcuts_line.index("[o]auto")
+    assert shortcuts_line.index("[o]auto") < shortcuts_line.index("[s]stop")
+    assert shortcuts_line.index("[s]stop") < shortcuts_line.index("[k]skip")
+    assert shortcuts_line.index("[k]skip") < shortcuts_line.index("[q]quit")
+    assert shortcuts_line.index("[q]quit") < shortcuts_line.index("[e]edit")
+    assert shortcuts_line.index("[e]edit") < shortcuts_line.index("[l]reload")
+    assert "[e]edit" in shortcuts_line
+    assert "[l]reload" in shortcuts_line
+    assert "[n]new" in shortcuts_line
     assert "(a)dd" not in shortcuts_line
     assert "(m)odel" not in shortcuts_line
     assert "(f)ast" not in shortcuts_line
     assert "(p)erms" not in shortcuts_line
     assert "aut(o)" not in shortcuts_line
-    assert "\u2191\u2193 scroll" in shortcuts_line
+    assert "[\u2191\u2193]scroll" in shortcuts_line
     assert "(j/k)" not in shortcuts_line
-    assert "(h)elp" in shortcuts_line
-    assert shortcuts_line.index("(h)elp") < shortcuts_line.index("v1.2.3")
-    assert "v1.2.3 | MIT" in shortcuts_line
-    assert shortcuts_line.index("v1.2.3") < shortcuts_line.index("MIT")
+    assert "[h]help" in shortcuts_line
+    assert shortcuts_line.index("[h]help") < shortcuts_line.index("v1.2.3")
+    assert "MIT" not in shortcuts_line
+
+
+def test_render_footer_keeps_all_shortcuts_visible_at_80_columns() -> None:
+    frame = render_frame(
+        tasks=[Task("task")],
+        logs=[],
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0, version="1.2.3"),
+        width=80,
+        height=24,
+    )
+
+    lines = frame.splitlines()
+    shortcuts_line = next(line for line in lines if "r:run" in line)
+
+    assert all(len(line) <= 80 for line in lines)
+    assert "r:run" in shortcuts_line
+    assert "o:auto" in shortcuts_line
+    assert "s:stop" in shortcuts_line
+    assert "k:skip" in shortcuts_line
+    assert "q:quit" in shortcuts_line
+    assert "e:edit" in shortcuts_line
+    assert "l:reload" in shortcuts_line
+    assert "n:new" in shortcuts_line
+    assert "scroll" in shortcuts_line
+    assert "h:help" in shortcuts_line
+    assert "v1.2.3" in shortcuts_line
 
 
 def test_render_shows_warm_session_state() -> None:
@@ -470,8 +511,8 @@ def test_render_uses_compact_mode_for_small_terminal() -> None:
     assert "⡎⠑ ⢀⡀ ⢀⣸" in frame
     assert "⠣⠔ ⠣⠜ ⠣⠼" in frame
     assert "compact mode" in frame
-    assert "(r)un" in frame
-    assert "(n)ew" in frame
+    assert "r:run" in frame
+    assert "n:new" in frame
 
 
 def test_render_compact_help_is_non_blocking_text() -> None:
@@ -485,7 +526,7 @@ def test_render_compact_help_is_non_blocking_text() -> None:
     )
 
     assert "Help" in frame
-    assert "(s)top" in frame
+    assert "s:stop" in frame
 
 
 def test_render_full_help_uses_output_panel() -> None:

@@ -293,6 +293,7 @@ class CodexProcessRunner:
         self._active_run_reused_codex_session = False
         self._codex_session_key: tuple[str, ...] | None = None
         self._active_run_codex_session_key: tuple[str, ...] | None = None
+        self._queued_resume_input: str | None = None
 
     def start(self, todo_path: str | os.PathLike[str]) -> RunStatus:
         with self._lock:
@@ -324,6 +325,9 @@ class CodexProcessRunner:
                         self._codex_session_key = None
                 if self._active_run_reused_codex_session:
                     args = build_codex_exec_resume_command(args)
+                    if self._queued_resume_input is not None:
+                        stdin_prompt = self._queued_resume_input
+                        self._queued_resume_input = None
                 popen_kwargs: dict[str, object] = {
                     "stdout": subprocess.PIPE,
                     "stderr": subprocess.STDOUT,
@@ -509,6 +513,10 @@ class CodexProcessRunner:
                 self._record_event_locked(self.last_error, level="ERROR")
                 return False
             return True
+
+    def queue_next_resume_input(self, text: str) -> None:
+        with self._lock:
+            self._queued_resume_input = text
 
     def _is_running_locked(self) -> bool:
         return self._process is not None and self._process.poll() is None

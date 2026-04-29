@@ -215,6 +215,35 @@ def test_successful_codex_exec_run_warms_next_run_with_resume(tmp_path: Path) ->
     ]
 
 
+def test_queued_resume_input_replaces_prompt_only_on_resumed_codex_exec_run(tmp_path: Path) -> None:
+    first_stdin = FakeStdin()
+    second_stdin = FakeStdin()
+    processes = [
+        FakeProcess(stdout="question\n", returncode=None, stdin=first_stdin),
+        FakeProcess(stdout="answer\n", returncode=None, stdin=second_stdin),
+    ]
+    seen_args: list[list[str]] = []
+
+    def factory(*args: object, **kwargs: object) -> FakeProcess:
+        seen_args.append(args[0])  # type: ignore[arg-type]
+        return processes.pop(0)
+
+    runner = CodexProcessRunner(
+        'codex exec --model gpt-5.4 "Read {todo}. Work on first task."',
+        tmp_path / "logs" / "agent.log",
+        popen_factory=factory,
+    )
+
+    runner.start(tmp_path / "AI_TODO.md")
+    runner.wait()
+    runner.queue_next_resume_input("rouge")
+    runner.start(tmp_path / "AI_TODO.md")
+
+    assert seen_args[1] == ["codex", "exec", "--model", "gpt-5.4", "resume", "--last", "-"]
+    assert first_stdin.payload == f"Read {tmp_path / 'AI_TODO.md'}. Work on first task."
+    assert second_stdin.payload == "rouge"
+
+
 def test_codex_exec_resume_restarts_when_command_options_change(tmp_path: Path) -> None:
     processes = [
         FakeProcess(stdout="first\n", returncode=None, stdin=FakeStdin()),

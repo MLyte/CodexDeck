@@ -29,6 +29,8 @@ class RenderStatus:
     message: str = ""
     prompt: str = ""
     prompt_can_answer: bool = False
+    prompt_options: tuple[str, ...] = ()
+    prompt_freeform: bool = True
     session: str = "batch"
 
 
@@ -71,6 +73,22 @@ CODEXDECK_COMPACT_ART = (
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+YES_NO_RE = re.compile(r"\b(?:y/n|yes/no|yes\s+or\s+no|o/n|oui/non|oui\s+ou\s+non)\b", re.IGNORECASE)
+EITHER_OR_RE = re.compile(r"\s+(?:or|ou)\s+", re.IGNORECASE)
+CLOSED_QUESTION_RE = re.compile(
+    r"^\s*(?:do|does|did|should|can|could|would|will|is|are|est-ce|veux-tu|voulez-vous|tu veux|"
+    r"souhaites-tu|souhaitez-vous|faut-il)\b|\best[- ](?:ce|il|elle)\b",
+    re.IGNORECASE,
+)
+FRENCH_CLOSED_QUESTION_RE = re.compile(
+    r"\b(?:est-ce|est[- ](?:ce|il|elle)|veux-tu|voulez-vous|tu veux|souhaites-tu|souhaitez-vous|faut-il)\b",
+    re.IGNORECASE,
+)
+LEADING_OPTION_WORDS_RE = re.compile(r"^(?:le|la|les|l'|un|une|the|a|an)\s+", re.IGNORECASE)
+TRAILING_LEFT_OPTION_RE = re.compile(
+    r"(?:^|\s)(?:le|la|les|l'|un|une|the|a|an)\s+([\wÀ-ÿ'-]+(?:\s+[\wÀ-ÿ'-]+){0,2})$",
+    re.IGNORECASE,
+)
 
 
 def clean_terminal_text(text: str) -> str:
@@ -102,6 +120,127 @@ def format_duration(seconds: float | None) -> str:
     if minutes:
         return f"{minutes}m{secs:02d}s"
     return f"{secs}s"
+
+
+def detect_prompt_options(prompt: str, explicit_options: Iterable[str] = ()) -> tuple[str, ...]:
+    options = tuple(truncate(option.strip(), 24) for option in explicit_options if option.strip())
+    if options:
+        return options[:4]
+
+    question = clean_terminal_text(prompt).strip()
+    if not question:
+        return ()
+
+    normalized = question.lower()
+    if YES_NO_RE.search(normalized):
+        if "oui" in normalized or "o/n" in normalized:
+            return ("oui", "non")
+        return ("yes", "no")
+
+    clean_question = question.strip(" \t\r\n?.!:;")
+    if len(EITHER_OR_RE.findall(clean_question)) != 1:
+        return _closed_prompt_options(normalized, question)
+
+    left_text, right_text = EITHER_OR_RE.split(clean_question, maxsplit=1)
+    left = _left_prompt_option(left_text)
+    right = _right_prompt_option(right_text)
+    if not left or not right or left.casefold() == right.casefold():
+        return _closed_prompt_options(normalized, question)
+    options = (left, right)
+    if all(option.casefold() not in {"yes", "no", "oui", "non"} for option in options):
+        return options
+
+    return _closed_prompt_options(normalized, question)
+
+
+def _closed_prompt_options(normalized_prompt: str, prompt: str) -> tuple[str, ...]:
+    if CLOSED_QUESTION_RE.search(normalized_prompt) and prompt.endswith("?"):
+        if FRENCH_CLOSED_QUESTION_RE.search(normalized_prompt):
+            return ("oui", "non")
+        return ("yes", "no")
+    return ()
+
+
+def _left_prompt_option(text: str) -> str:
+    text = text.strip(" \t\r\n\"'`.,:;")
+    article_match = TRAILING_LEFT_OPTION_RE.search(text)
+    if article_match:
+        return _clean_prompt_option(article_match.group(1))
+    words = text.split()
+    return _clean_prompt_option(words[-1]) if words else ""
+
+
+def _right_prompt_option(text: str) -> str:
+    text = LEADING_OPTION_WORDS_RE.sub("", text.strip(" \t\r\n\"'`.,:;"))
+    words = text.split()
+    return _clean_prompt_option(" ".join(words[:3])) if words else ""
+
+
+def _clean_prompt_option(text: str) -> str:
+    return truncate(LEADING_OPTION_WORDS_RE.sub("", text.strip(" \t\r\n\"'`.,:;")), 24)
+
+
+def _prompt_help_line(status: RenderStatus, *, compact: bool = False) -> str:
+    options = detect_prompt_options(status.prompt, status.prompt_options)
+    if options:
+        option_hint = " | ".join(f"{index + 1} {option}" for index, option in enumerate(options))
+        if status.prompt_freeform:
+            suffix = "type free answer" if compact else "free answer"
+            return f"Reply: {option_hint} | {suffix} | Enter send | Esc cancel"
+        return f"Reply: {option_hint} | Enter send | Esc cancel"
+    if status.prompt_freeform:
+        return "Reply: type a free answer | Enter send | Esc cancel"
+    return "Reply required: edit TODO or rerun with an answer"
+
+
+def _shortcut_toolbar_lines(version_text: str, width: int, *, max_lines: int = 1) -> list[str]:
+    keycap_line = (
+        f"[r]run [o]auto [s]stop [k]skip [q]quit [e]edit [l]reload [n]new "
+        f"[\u2191\u2193]scroll [h]help {version_text}"
+    )
+    compact_tokens = (
+        "r:run",
+        "o:auto",
+        "s:stop",
+        "k:skip",
+        "q:quit",
+        "e:edit",
+        "l:reload",
+        "n:new",
+        "scroll",
+        "h:help",
+        version_text,
+    )
+    compact_line = " ".join(compact_tokens)
+
+    if max_lines <= 1:
+        if len(keycap_line) <= width:
+            return [keycap_line]
+        return [truncate(compact_line, width)]
+
+    lines: list[str] = []
+    current = ""
+    for token in compact_tokens:
+        candidate = token if not current else f"{current} {token}"
+        if len(candidate) <= width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        current = token
+        if len(lines) == max_lines - 1:
+            break
+    remaining_tokens = compact_tokens[compact_tokens.index(token) :]
+    if len(lines) == max_lines - 1 and remaining_tokens:
+        current = " ".join(remaining_tokens)
+    if current:
+        lines.append(truncate(current, width))
+    return lines[:max_lines]
+
+
+def _deck_title(label: str, width: int, *, lamp: str = "") -> str:
+    title = f" {label} " if not lamp else f" {lamp} {label} "
+    return truncate(title, width).center(width, "━")
 
 
 def _pad_line(text: str, width: int) -> str:
@@ -167,19 +306,20 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
     version_text = f"v{status.version}" if status.version else "v0.0.0"
     width = max(1, width)
     height = max(1, height)
-    compact_keys = (
-        f"Keys: (r)un | Aut(o) | (s)top | (k)skip | (q)uit | (e)dit | re(l)oad | (n)ew | (h)elp | {version_text}"
-    )
+    toolbar_lines = _shortcut_toolbar_lines(version_text, width, max_lines=2)
     if show_help:
         lines = [
             *[line.center(width) for line in CODEXDECK_COMPACT_ART],
             "compact mode",
             "Help",
             "CodexDeck keeps AI_TODO.md visible.",
-            "Options: (M)odel, (F)ast, (Pe)rm, Aut(o)",
-            compact_keys,
+            "Runtime: M model | F fast | Pe perm",
+            *toolbar_lines,
             "made by lyte | https://github.com/MLyte/CodexDeck",
         ]
+        if status.prompt:
+            lines.insert(3, f"Action required: {status.prompt}")
+            lines.insert(4, _prompt_help_line(status, compact=True))
         lines = lines[:height]
         while len(lines) < height:
             lines.append("")
@@ -197,15 +337,15 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
         ),
         f"Session: {status.session}",
         f"Last run: {status.last_run}",
-        compact_keys,
+        *toolbar_lines,
     ]
     if status.message:
         lines.insert(2, status.message)
     if status.prompt:
-        label = "Action required" if status.prompt_can_answer else "Question from Codex"
+        label = "Action required"
         lines.insert(3, f"{label}: {status.prompt}")
-        hint = "Answer: y yes | n no | s stop" if status.prompt_can_answer else "Next: e edit TODO | r rerun | k skip"
-        lines.insert(4, hint)
+        lines.insert(4, _prompt_help_line(status, compact=True))
+        lines = [line for line in lines if not line.startswith("Last run:")]
     lines = lines[:height]
     while len(lines) < height:
         lines.append("")
@@ -241,7 +381,7 @@ def render_frame(
     show_compact_header = not show_header and content_width >= max(len(line) for line in CODEXDECK_COMPACT_ART)
     header_lines = CODEXDECK_ART if show_header else CODEXDECK_COMPACT_ART if show_compact_header else ()
     header_h = len(header_lines) + 1 if header_lines else 0
-    prompt_h = 3 if status.prompt and not show_help else 0
+    prompt_h = 4 if status.prompt else 0
     available_h = max(4, height - 11 - header_h - (prompt_h + 2 if prompt_h else 0))
     task_list = list(tasks)
     task_hint = list(task_panel_hint)
@@ -271,11 +411,8 @@ def render_frame(
         rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
     task_offset = clamp_task_offset(len(task_list), task_h, task_offset)
 
-    rendered.append(
-        borders["v"]
-        + truncate(task_range_label(len(task_list), task_h, task_offset), content_width).center(content_width)
-        + borders["v"]
-    )
+    task_label = task_range_label(len(task_list), task_h, task_offset)
+    rendered.append(borders["v"] + _deck_title(f"TODO PAD · {task_label}", content_width, lamp="▣") + borders["v"])
 
     visible_tasks = task_list[task_offset : task_offset + task_h]
     task_texts = []
@@ -296,7 +433,7 @@ def render_frame(
     rendered.extend(borders["v"] + text.ljust(content_width) + borders["v"] for text in task_texts[:task_h])
 
     rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
-    output_title = "Codex Output"
+    output_title = "◉ Codex Output CRT"
     rendered.append(borders["v"] + truncate(output_title, content_width).center(content_width) + borders["v"])
     output_width = content_width - 2
     output_source = list(logs)
@@ -314,7 +451,7 @@ def render_frame(
 
     rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
     if prompt_h:
-        prompt_title = "Action Required" if status.prompt_can_answer else "Question from Codex"
+        prompt_title = "Action Required"
         rendered.append(borders["v"] + prompt_title.center(content_width) + borders["v"])
         prompt_width = content_width - 2
         prompt_lines = wrap(
@@ -323,17 +460,14 @@ def render_frame(
             break_long_words=False,
             break_on_hyphens=False,
         ) or [""]
-        prompt_texts = [truncate(line, prompt_width) for line in prompt_lines[:2]]
-        if status.prompt_can_answer:
-            prompt_texts.append("Answer: y yes | n no | Esc no | s stop")
-        else:
-            prompt_texts.append("Next: e edit TODO | r rerun | k skip")
+        prompt_texts = [truncate(line, prompt_width) for line in prompt_lines[:3]]
+        prompt_texts.append(_prompt_help_line(status))
         while len(prompt_texts) < prompt_h:
             prompt_texts.append("")
         rendered.extend(borders["v"] + text.ljust(content_width) + borders["v"] for text in prompt_texts[:prompt_h])
         rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
 
-    rendered.append(borders["v"] + "Task Summary".center(content_width) + borders["v"])
+    rendered.append(borders["v"] + _deck_title("Task Summary Ticket", content_width, lamp="▤") + borders["v"])
     summary_texts = [truncate(line, content_width - 2) for line in summary_lines]
     while len(summary_texts) < summary_h:
         summary_texts.append("")
@@ -354,10 +488,12 @@ def render_frame(
         f"(M)odel: {status.model} | (F)ast: {_on_off(status.fast_mode)} | "
         f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)} | Session: {status.session}"
     )
-    shortcuts_line = (
-        f"Keys: (r)un CodexDeck | Aut(o) | (s)top | (k)skip | (q)uit | (e)dit | re(l)oad | (n)ew | "
-        f"\u2191\u2193 scroll | (h)elp | v{status.version or '0.0.0'} | MIT"
-    )
+    prefixed_width = max(1, content_width - 7)
+    shortcuts_body = _shortcut_toolbar_lines(f"v{status.version or '0.0.0'}", prefixed_width, max_lines=1)[0]
+    if len(shortcuts_body) >= prefixed_width and shortcuts_body.endswith("..."):
+        shortcuts_line = _shortcut_toolbar_lines(f"v{status.version or '0.0.0'}", content_width, max_lines=1)[0]
+    else:
+        shortcuts_line = "[KEYS] " + shortcuts_body
     rendered.append(borders["v"] + truncate(status_line, content_width).ljust(content_width) + borders["v"])
     rendered.append(borders["v"] + truncate(runtime_line, content_width).ljust(content_width) + borders["v"])
     rendered.append(borders["v"] + truncate(shortcuts_line, content_width).ljust(content_width) + borders["v"])

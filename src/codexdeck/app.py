@@ -27,9 +27,9 @@ from shlex import split as shlex_split
 from typing import Callable, Optional, Protocol, TextIO
 
 from codexdeck import __version__
-from codexdeck.core import CockpitConfig, ConfigError, TodoTask, parse_todo_file
+from codexdeck.core import APP_ACTION_REQUIRED_STATE, CockpitConfig, ConfigError, TodoTask, UserActionRequest, parse_todo_file
 from codexdeck.runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessNotRunning, RunStatus, RunnerState
-from codexdeck.ui import RenderStatus, clamp_task_offset, clean_terminal_text, format_duration, render_frame, truncate
+from codexdeck.ui import RenderStatus, clamp_task_offset, clean_terminal_text, detect_prompt_options, format_duration, render_frame, truncate
 
 
 PROMPT_KEYWORDS = (
@@ -265,6 +265,11 @@ class Cockpit:
         self._run_prompt: str | None = None
         self._answered_run_prompt: str | None = None
         self._run_prompt_can_answer = False
+        self._run_prompt_can_resume = False
+        self._action_request: UserActionRequest | None = None
+        self._prompt_answer_input_active = False
+        self._prompt_answer_input_buffer = ""
+        self._pending_resume_answer: str | None = None
         self._prompt_log_start = 0
         self.task_input_active = False
         self.task_input_buffer = ""
@@ -330,6 +335,10 @@ class Cockpit:
             self._run_prompt = None
             self._answered_run_prompt = None
             self._run_prompt_can_answer = False
+            self._run_prompt_can_resume = False
+            self._action_request = None
+            self._prompt_answer_input_active = False
+            self._prompt_answer_input_buffer = ""
             self._prompt_log_start = len(self.runner.logs())
             task = self._next_open_task()
             if not self.todo_path.exists():
@@ -341,9 +350,22 @@ class Cockpit:
             self.active_task_id = task.id if task is not None else None
             self.active_task_label = self._task_label(task)
             self._apply_effective_command()
+            queued_answer = self._pending_resume_answer
+            if queued_answer is not None:
+                queue_resume_input = getattr(self.runner, "queue_next_resume_input", None)
+                if not callable(queue_resume_input):
+                    self.runner.log_buffer.append("> Cannot resume with the queued answer: this runner does not support resume input.")
+                    return
+                queue_resume_input(queued_answer)
             status = self.runner.start(self.todo_path)
             self.last_run = time.strftime("%H:%M:%S")
             session_reused = bool(getattr(status, "codex_session_reused", False))
+            if queued_answer is not None:
+                if session_reused:
+                    self._pending_resume_answer = None
+                    self.runner.log_buffer.append("> Sent queued answer to Codex session resume.")
+                else:
+                    self.runner.log_buffer.append("> Queued answer was not sent because the previous Codex session could not be reused.")
             session_note = "Resuming the warm Codex session." if session_reused else "Starting a new Codex session."
             self.runner.log_buffer.append(f"> Target task: {self.active_task_label}")
             self.runner.log_buffer.append(
@@ -370,11 +392,12 @@ class Cockpit:
     def _render(self, width: int, height: int) -> str:
         runner_status = self.runner.status()
         logs = self._help_lines() if self.show_help else self._display_logs(self.runner.logs())
+        render_state = APP_ACTION_REQUIRED_STATE if self._action_request is not None else runner_status.state.value
         return render_frame(
             tasks=self.tasks,
             logs=logs,
             status=RenderStatus(
-                state=runner_status.state.value,
+                state=render_state,
                 model=self._effective_model(),
                 version=__version__,
                 permission=self.permission,
@@ -408,14 +431,19 @@ class Cockpit:
 
         if status.state == RunnerState.STOPPING:
             return f"Stopping {self.agent_label} on {self.active_task_label or self.last_task_label}."
-        if self._run_prompt:
+        if self.quit_confirmation:
+            return "Quit CodexDeck? Press y to confirm, n or Esc to cancel."
+        if self._action_request is not None:
+            if self._prompt_answer_input_active:
+                text = self._prompt_answer_input_buffer or " "
+                return f"Answer: {text} | Enter send, Esc cancel, Backspace edit."
             if self._run_prompt_can_answer:
                 return "Codex is waiting for your answer."
+            if self._run_prompt_can_resume:
+                return "Action required. Choose 1/2 or type an answer, Enter to send, k to skip."
             return "Codex asked a question. Edit TODO, rerun, or skip."
         if running:
             return f"[{self._activity_spinner()}] {self.agent_label} is running on {self.active_task_label}."
-        if self.quit_confirmation:
-            return "Quit CodexDeck? Press y to confirm, n or Esc to cancel."
         if self.task_input_active:
             text = self.task_input_buffer or " "
             return f"New task: {text} | Ctrl-S save, Esc cancel, Backspace edit."
@@ -529,32 +557,99 @@ class Cockpit:
         if prompt is not None and prompt != self._run_prompt:
             self._run_prompt = prompt
             self._run_prompt_can_answer = self._status_running(status)
+            self._run_prompt_can_resume = (
+                not self._run_prompt_can_answer
+                and bool(getattr(status, "codex_session_ready", False))
+            )
+            self._action_request = UserActionRequest(
+                prompt=prompt,
+                can_answer_live=self._run_prompt_can_answer,
+                can_resume=self._run_prompt_can_resume,
+            )
+            self._prompt_answer_input_active = False
+            self._prompt_answer_input_buffer = ""
 
     def _submit_run_prompt_answer(self, answer: str) -> None:
         if not self._run_prompt:
             return
-        if not self._run_prompt_can_answer:
-            self.runner.log_buffer.append("> Codex is no longer waiting for input. Edit AI_TODO.md, rerun, or skip this step.")
+        cleaned_answer = " ".join(answer.split())
+        if not cleaned_answer:
+            self.runner.log_buffer.append("> Answer is empty. Type an answer or press Esc to cancel.")
             return
-        if self.runner.send_input(answer):
-            self._record_user_event(f"codex prompt answered | prompt={self._run_prompt} | answer={answer}")
+        if self._run_prompt_can_answer and self.runner.send_input(cleaned_answer):
+            self._record_user_event(f"codex prompt answered | prompt={self._run_prompt} | answer={cleaned_answer}")
             self._answered_run_prompt = self._run_prompt
-            self.runner.log_buffer.append(f"> Sent '{answer}' to Codex.")
+            self.runner.log_buffer.append(f"> Sent '{cleaned_answer}' to Codex.")
             self._run_prompt = None
             self._run_prompt_can_answer = False
+            self._run_prompt_can_resume = False
+            self._action_request = None
+            self._prompt_answer_input_active = False
+            self._prompt_answer_input_buffer = ""
+            return
+        if self._run_prompt_can_resume:
+            self._pending_resume_answer = cleaned_answer
+            self._record_user_event(f"codex prompt queued for resume | prompt={self._run_prompt} | answer={cleaned_answer}")
+            self._answered_run_prompt = self._run_prompt
+            self.runner.log_buffer.append("> Answer queued for the next Codex resume run.")
+            self._run_prompt = None
+            self._run_prompt_can_answer = False
+            self._run_prompt_can_resume = False
+            self._action_request = None
+            self._prompt_answer_input_active = False
+            self._prompt_answer_input_buffer = ""
         else:
-            self.runner.log_buffer.append("> Cannot send input to Codex. Press s to stop the run, then run again.")
+            self.runner.log_buffer.append("> Codex is no longer waiting and this command cannot resume. Edit AI_TODO.md, rerun, or skip this step.")
 
     def _handle_run_prompt_key(self, key: str) -> None:
-        if key == "y":
+        shortcut = key.lower()
+        options = detect_prompt_options(self._run_prompt or "")
+        if shortcut.isdigit() and options:
+            index = int(shortcut) - 1
+            if 0 <= index < len(options):
+                self._submit_run_prompt_answer(options[index])
+            else:
+                self.runner.log_buffer.append("> Unknown option. Choose one of the numbered answers, type a free answer, or press k to skip.")
+        elif shortcut == "y":
             self._submit_run_prompt_answer("y")
-        elif key in {"n", "\x1b"}:
+        elif shortcut == "n":
             self._submit_run_prompt_answer("n")
-        elif key == "s":
+        elif shortcut == "a":
+            self._prompt_answer_input_active = True
+            self._prompt_answer_input_buffer = ""
+            self.runner.log_buffer.append("> Type the answer, then press Enter to send or Esc to cancel.")
+        elif key in {"\x1b", "ESC"}:
+            self.runner.log_buffer.append("> Action required. Choose 1/2, type a free answer, or press k to skip.")
+        elif shortcut == "k":
+            self._skip_current_task()
+        elif shortcut == "q":
+            self.quit_confirmation = True
+            self.runner.log_buffer.append("> Quit CodexDeck? Press y to confirm, n or Esc to cancel.")
+        elif shortcut == "s":
             self.stop(block=False)
+        elif len(key) == 1 and key.isprintable():
+            self._prompt_answer_input_active = True
+            self._prompt_answer_input_buffer = key
         else:
-            self.runner.log_buffer.append("> Waiting for confirmation: press y to accept, n to decline.")
+            self.runner.log_buffer.append("> Action required. Choose 1/2, type a free answer, or press k to skip.")
         return
+
+    def _handle_prompt_answer_input_key(self, key: str) -> None:
+        if key in {"\x1b", "ESC"}:
+            self._prompt_answer_input_active = False
+            self._prompt_answer_input_buffer = ""
+            self.runner.log_buffer.append("> Answer cancelled. Action required is still pending.")
+            return
+        if key in {"\x13", "\r", "\n"}:
+            self._submit_run_prompt_answer(self._prompt_answer_input_buffer)
+            return
+        if key in {"\x7f", "\b"}:
+            self._prompt_answer_input_buffer = self._prompt_answer_input_buffer[:-1]
+            return
+        if key == "\t":
+            return
+        if len(key) == 1 and key.isprintable():
+            self._prompt_answer_input_buffer += key
 
     @staticmethod
     def _help_lines() -> list[str]:
@@ -697,6 +792,11 @@ class Cockpit:
         self._answered_run_prompt = self._run_prompt
         self._run_prompt = None
         self._run_prompt_can_answer = False
+        self._run_prompt_can_resume = False
+        self._action_request = None
+        self._prompt_answer_input_active = False
+        self._prompt_answer_input_buffer = ""
+        self._pending_resume_answer = None
         self.last_task_label = self._task_label(task)
         self.active_task_id = None
         self.active_task_label = ""
@@ -902,6 +1002,16 @@ class Cockpit:
     def _maybe_start_next_auto_run(self, status: RunStatus) -> None:
         if not self.auto_mode or self._status_running(status) or getattr(status, "returncode", None) != 0:
             return
+        if self._action_request is not None:
+            self.auto_mode = False
+            self.runner.log_buffer.append("> Auto mode paused. Codex is waiting for user input.")
+            self._record_user_event("auto mode paused | reason=action required")
+            return
+        if self._pending_resume_answer is not None:
+            self.runner.log_buffer.append("> Auto mode resuming Codex with queued answer.")
+            self._record_user_event("auto resume | reason=queued answer")
+            self._start_codex()
+            return
         self.load_todo_if_changed(force=True)
         next_task = self._next_open_task()
         if next_task is None:
@@ -934,13 +1044,13 @@ class Cockpit:
                 self._refresh_run_prompt(runner_status)
                 key = key_reader.get_key()
                 if key:
-                    if self.task_input_active:
+                    if self._prompt_answer_input_active:
+                        self._handle_prompt_answer_input_key(key)
+                    elif self.task_input_active:
                         self._handle_task_input_key(key)
                     else:
                         k = key.lower()
-                        if self._run_prompt is not None and self._run_prompt_can_answer:
-                            self._handle_run_prompt_key(k)
-                        elif self.quit_confirmation:
+                        if self.quit_confirmation:
                             if k == "y":
                                 break
                             if k in {"n", "\x1b"}:
@@ -949,6 +1059,8 @@ class Cockpit:
                                 self._record_user_event("quit cancelled")
                             else:
                                 self.runner.log_buffer.append("> Quit pending. Press y to confirm, n or Esc to cancel.")
+                        elif self._action_request is not None:
+                            self._handle_run_prompt_key(key)
                         elif k == "q":
                             self.quit_confirmation = True
                             self.runner.log_buffer.append("> Quit CodexDeck? Press y to confirm, n or Esc to cancel.")
@@ -998,6 +1110,7 @@ class Cockpit:
                     self.last_task_label = self.active_task_label
                     self.active_task_label = ""
                 self._record_terminal_run_if_needed(refreshed_status)
+                self._refresh_run_prompt(refreshed_status)
                 self._maybe_start_next_auto_run(refreshed_status)
                 self._screen_writer(content)
                 self._sleeper(self.refresh_delay)

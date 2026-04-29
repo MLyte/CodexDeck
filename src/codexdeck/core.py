@@ -218,6 +218,17 @@ class RunContext:
     last_error: CodexDeckError | None = None
 
 
+APP_ACTION_REQUIRED_STATE = "ACTION_REQUIRED"
+
+
+@dataclass(frozen=True)
+class UserActionRequest:
+    prompt: str
+    can_answer_live: bool = False
+    can_resume: bool = False
+    answer: str | None = None
+
+
 @dataclass
 class StateMachine:
     state: RunState = RunState.IDLE

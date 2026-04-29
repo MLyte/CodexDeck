@@ -35,6 +35,8 @@ class FakeStatus:
     run_id: str | None = None
     returncode: int | None = None
     duration_seconds: float | None = None
+    codex_session_ready: bool = False
+    codex_session_reused: bool = False
 
 
 class FakeLogBuffer:
@@ -55,6 +57,7 @@ class FakeRunner:
         self.command = "fake {todo}"
         self.started_command = ""
         self.sent_inputs: list[str] = []
+        self.queued_resume_inputs: list[str] = []
 
     def start(self, todo_path: Path) -> FakeStatus:
         assert todo_path.exists()
@@ -79,6 +82,9 @@ class FakeRunner:
     def send_input(self, text: str) -> bool:
         self.sent_inputs.append(text)
         return True
+
+    def queue_next_resume_input(self, text: str) -> None:
+        self.queued_resume_inputs.append(text)
 
 
 class AutoCompletingRunner(FakeRunner):
@@ -115,6 +121,24 @@ class AutoCompletingRunner(FakeRunner):
             run_id=self._completed_run_id,
             returncode=self._completed_returncode,
             duration_seconds=0.1 if self._completed_returncode is not None else None,
+        )
+
+
+class QuestionCompletingRunner(AutoCompletingRunner):
+    def status(self) -> FakeStatus:
+        status = super().status()
+        if status.returncode == 0 and not any("Est-ce que tu preferes rouge ou bleu ?" in line for line in self.log_buffer.lines):
+            self.log_buffer.append(
+                "2026-04-29T10:18:17 [abcdef1234567890abcdef1234567890] "
+                "Est-ce que tu preferes rouge ou bleu ?"
+            )
+        return FakeStatus(
+            state=status.state,
+            errors=status.errors,
+            run_id=status.run_id,
+            returncode=status.returncode,
+            duration_seconds=status.duration_seconds,
+            codex_session_ready=status.returncode == 0,
         )
 
 
@@ -671,6 +695,68 @@ def test_auto_mode_starts_next_task_after_successful_checked_off_run(tmp_path: P
     assert "auto next task | target=line 2: second task" in user_log
 
 
+def test_auto_mode_pauses_when_completed_run_requires_user_action(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    config = make_config(tmp_path)
+    config.todo_path.write_text("- [ ] first task\n- [ ] second task\n", encoding="utf-8")
+    runner = QuestionCompletingRunner(todo_path=config.todo_path, mark_first_task_done=True)
+    key_reader = FakeKeyReader(["o", "r", None, "q", "y"])
+    frames: list[str] = []
+    cockpit = module.Cockpit(
+        config,
+        key_reader_factory=lambda: key_reader,
+        terminal_size=lambda: (120, 24),
+        sleeper=lambda _delay: None,
+        screen_writer=frames.append,
+        runner=runner,
+    )
+
+    cockpit.loop()
+
+    assert runner.started == 1
+    assert cockpit.auto_mode is False
+    assert any("Auto mode paused. Codex is waiting for user input." in line for line in runner.log_buffer.lines)
+    assert "auto mode paused | reason=action required" in config.user_log_path.read_text(encoding="utf-8")
+    assert any("ACTION_REQUIRED" in frame for frame in frames)
+
+
+def test_completed_run_answer_is_queued_for_next_resume(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    runner = FakeRunner()
+    runner.state = RunnerState.IDLE
+    runner.log_buffer.append(
+        "2026-04-29T10:18:17 [abcdef1234567890abcdef1234567890] "
+        "Est-ce que tu preferes rouge ou bleu ?"
+    )
+
+    class ResumeReadyRunner(FakeRunner):
+        def status(self) -> FakeStatus:
+            return FakeStatus(state=self.state, run_id="run-1", returncode=0, codex_session_ready=True)
+
+        def start(self, todo_path: Path) -> FakeStatus:
+            status = super().start(todo_path)
+            return FakeStatus(state=status.state, run_id="run-2", codex_session_reused=True)
+
+    resume_runner = ResumeReadyRunner()
+    resume_runner.log_buffer = runner.log_buffer
+    key_reader = FakeKeyReader([None, "a", *list("rouge"), "\x13", "r", "q", "y"])
+    cockpit = module.Cockpit(
+        make_config(tmp_path),
+        key_reader_factory=lambda: key_reader,
+        terminal_size=lambda: (120, 24),
+        sleeper=lambda _delay: None,
+        screen_writer=lambda _frame: None,
+        runner=resume_runner,
+    )
+
+    cockpit.loop()
+
+    assert resume_runner.queued_resume_inputs == ["rouge"]
+    assert resume_runner.started == 1
+    assert any("Answer queued for the next Codex resume run." in line for line in resume_runner.log_buffer.lines)
+    assert any("Sent queued answer to Codex session resume." in line for line in resume_runner.log_buffer.lines)
+
+
 def test_auto_mode_can_be_armed_before_first_run(tmp_path: Path) -> None:
     module = load_cockpit_module()
     config = make_config(tmp_path)
@@ -1038,7 +1124,7 @@ def test_loop_shows_completed_run_question_without_blocking_skip(tmp_path: Path)
     todo_text = config.todo_path.read_text(encoding="utf-8")
     assert "- [x] first task # skipped" in todo_text
     assert "- [ ] second task" in todo_text
-    assert any("Question from Codex" in frame for frame in frames)
+    assert any("Action Required" in frame for frame in frames)
     assert any("Skipped task: line 1: first task" in line for line in runner.log_buffer.lines)
     assert "task skipped | target=line 1: first task" in config.user_log_path.read_text(encoding="utf-8")
 
