@@ -9,6 +9,8 @@ CodexDeck is a local terminal cockpit for running Codex against an `AI_TODO.md` 
 
 It keeps the plan, live output, status, and run controls in one terminal screen so you can guide a local Codex run without leaving the project folder.
 
+The footer shows the resolved package version and the MIT license label.
+
 ![CodexDeck terminal UI screenshot](docs/codexdeck-tui.png)
 
 ## Why CodexDeck?
@@ -129,4 +131,3 @@ CodexDeck is an early usable MVP. The current focus is packaging, cross-platform
 ## License
 
 CodexDeck is released under the [MIT License](LICENSE).
-

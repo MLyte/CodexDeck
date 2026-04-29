@@ -259,7 +259,7 @@ def test_render_footer_lists_shortcuts_by_importance() -> None:
     frame = render_frame(
         tasks=[Task("task")],
         logs=[],
-        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0, version="1.2.3"),
         width=140,
         height=24,
     )
@@ -294,7 +294,9 @@ def test_render_footer_lists_shortcuts_by_importance() -> None:
     assert "\u2191\u2193 scroll" in shortcuts_line
     assert "(j/k)" not in shortcuts_line
     assert "(h)elp" in shortcuts_line
-    assert shortcuts_line.index("(h)elp") < shortcuts_line.index("made by lyte")
+    assert shortcuts_line.index("(h)elp") < shortcuts_line.index("v1.2.3")
+    assert "v1.2.3 | MIT" in shortcuts_line
+    assert shortcuts_line.index("v1.2.3") < shortcuts_line.index("MIT")
 
 
 def test_render_uses_compact_mode_for_small_terminal() -> None:

@@ -25,6 +25,7 @@ from pathlib import Path
 from shlex import split as shlex_split
 from typing import Callable, Optional, Protocol, TextIO
 
+from codexdeck import __version__
 from codexdeck.core import CockpitConfig, ConfigError, TodoTask, parse_todo_file
 from codexdeck.runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessNotRunning, RunStatus, RunnerState
 from codexdeck.ui import RenderStatus, clamp_task_offset, format_duration, render_frame, truncate
@@ -328,6 +329,7 @@ class Cockpit:
             status=RenderStatus(
                 state=runner_status.state.value,
                 model=self._effective_model(),
+                version=__version__,
                 permission=self.permission,
                 fast_mode=self.fast_mode,
                 auto_mode=self.auto_mode,
