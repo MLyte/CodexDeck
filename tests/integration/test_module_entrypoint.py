@@ -12,6 +12,14 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+CONFIG_ENV_KEYS = (
+    "CODEX_TODO_PATH",
+    "TODO_PATH",
+    "CODEX_LOG_PATH",
+    "LOG_PATH",
+    "CODEX_USER_LOG_PATH",
+    "USER_LOG_PATH",
+)
 
 
 def test_python_m_entrypoint_prints_config(codexdeck_workspace) -> None:
@@ -82,15 +90,21 @@ def test_installed_console_script_uses_launch_cwd(tmp_path) -> None:
     )
     assert install.returncode == 0, install.stderr
 
-    result = subprocess.run(
-        [str(codexdeck_exe), "--print-config"],
-        cwd=launch_dir,
-        env={
-            **os.environ,
+    launch_env = os.environ.copy()
+    for key in CONFIG_ENV_KEYS:
+        launch_env.pop(key, None)
+    launch_env.update(
+        {
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "utf-8",
             "CODEX_CMD": "codex {todo}",
-        },
+        }
+    )
+
+    result = subprocess.run(
+        [str(codexdeck_exe), "--print-config"],
+        cwd=launch_dir,
+        env=launch_env,
         text=True,
         encoding="utf-8",
         capture_output=True,
