@@ -27,6 +27,10 @@ DEFAULT_MODELS = (
     "gpt-5.2",
 )
 DEFAULT_FAST_MODEL = "gpt-5.3-codex-spark"
+DEFAULT_CODEX_CMD = (
+    'codex exec --model {model} --skip-git-repo-check '
+    '"Read {todo}. Work on the first unchecked task only."'
+)
 
 
 class ErrorCode(str, Enum):
@@ -66,7 +70,7 @@ class CockpitConfig:
     todo_path: Path
     log_path: Path
     user_log_path: Path
-    codex_cmd: str = "codex {todo}"
+    codex_cmd: str = DEFAULT_CODEX_CMD
     model: str = DEFAULT_MODELS[0]
     models: tuple[str, ...] = DEFAULT_MODELS
     fast_model: str = DEFAULT_FAST_MODEL
@@ -108,7 +112,7 @@ class CockpitConfig:
             todo_path=todo_path,
             log_path=log_path,
             user_log_path=user_log_path,
-            codex_cmd=source.get("CODEX_CMD", "codex {todo}"),
+            codex_cmd=source.get("CODEX_CMD", DEFAULT_CODEX_CMD),
             model=model,
             models=_csv_values(source.get("CODEX_MODELS"), defaults=DEFAULT_MODELS, required=(model,)),
             fast_model=fast_model,

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from codexdeck_ui import RenderStatus, clamp_task_offset, format_duration, render_frame, task_range_label, truncate
+from codexdeck_ui import clean_terminal_text, RenderStatus, clamp_task_offset, format_duration, render_frame, task_range_label, truncate
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,27 @@ def test_truncate_uses_stable_width() -> None:
     assert truncate("abcdef", 6) == "abcdef"
     assert truncate("abcdef", 5) == "ab..."
     assert truncate("abcdef", 2) == "ab"
+
+
+def test_clean_terminal_text_strips_ansi_and_control_sequences() -> None:
+    assert clean_terminal_text("\x1b[31mred\x1b[0m\rnext\x07") == "red next"
+
+
+def test_render_strips_ansi_logs_before_measuring_width() -> None:
+    frame = render_frame(
+        tasks=[Task("task")],
+        logs=[
+            "Codex output: \x1b[31m3 -\x1b[0m " + "x" * 200,
+            "Codex output: \x1b[32m3 +\x1b[0m " + "y" * 200,
+        ],
+        status=RenderStatus(state="RUNNING", model="normal", last_run="12:00", errors=0),
+        width=100,
+        height=24,
+    )
+
+    lines = frame.splitlines()
+    assert all(len(line) <= 100 for line in lines)
+    assert "\x1b[" not in frame
 
 
 def test_format_duration_is_compact() -> None:
@@ -88,7 +109,7 @@ def test_render_shows_codexdeck_ascii_header_when_space_allows() -> None:
     assert "AI_TODO.md 1-1/1" in frame
 
 
-def test_render_hides_codexdeck_ascii_header_when_height_is_tight() -> None:
+def test_render_uses_compact_brand_when_ascii_header_height_is_tight() -> None:
     frame = render_frame(
         tasks=[Task("task")],
         logs=[],
@@ -98,6 +119,8 @@ def test_render_hides_codexdeck_ascii_header_when_height_is_tight() -> None:
     )
 
     assert "▄█████" not in frame
+    assert "⡎⠑ ⢀⡀ ⢀⣸" in frame
+    assert "⠣⠔ ⠣⠜ ⠣⠼" in frame
 
 
 def test_render_keeps_codexdeck_ascii_header_with_help_when_space_allows() -> None:
@@ -135,6 +158,70 @@ def test_render_status_message_is_visible() -> None:
     )
 
     assert "Last run completed successfully." in frame
+
+
+def test_render_shows_action_required_panel_when_prompt_is_present() -> None:
+    frame = render_frame(
+        tasks=[Task("task")],
+        logs=["Codex output line"],
+        status=RenderStatus(
+            state="RUNNING",
+            model="normal",
+            last_run="12:00",
+            errors=0,
+            message="Codex is waiting for your answer.",
+            prompt="Tu veux que je coche cette tache ?",
+            prompt_can_answer=True,
+        ),
+        width=100,
+        height=24,
+    )
+
+    assert "Action Required" in frame
+    assert "Tu veux que je coche cette tache ?" in frame
+    assert "Answer: y yes | n no | Esc no | s stop" in frame
+
+
+def test_render_shows_non_interactive_codex_question_panel() -> None:
+    frame = render_frame(
+        tasks=[Task("task")],
+        logs=["Codex output line"],
+        status=RenderStatus(
+            state="IDLE",
+            model="normal",
+            last_run="12:00",
+            errors=0,
+            message="Codex asked a question.",
+            prompt="Est-ce que tu préfères rouge ou bleu ?",
+        ),
+        width=100,
+        height=24,
+    )
+
+    assert "Question from Codex" in frame
+    assert "Est-ce que tu préfères rouge ou bleu ?" in frame
+    assert "Next: e edit TODO | r rerun | k skip" in frame
+
+
+def test_render_compact_mode_shows_prompt_before_keys() -> None:
+    frame = render_frame(
+        tasks=[Task("task")],
+        logs=["log"],
+        status=RenderStatus(
+            state="RUNNING",
+            model="normal",
+            last_run="12:00",
+            errors=0,
+            message="Codex is waiting for your answer.",
+            prompt="Do you want to continue? (y/n)",
+            prompt_can_answer=True,
+        ),
+        width=79,
+        height=10,
+    )
+
+    assert "Action required: Do you want to continue? (y/n)" in frame
+    assert frame.index("Action required:") < frame.index("Keys: (r)un")
 
 
 def test_render_empty_task_panel_hint_when_no_tasks() -> None:
@@ -280,7 +367,8 @@ def test_render_footer_lists_shortcuts_by_importance() -> None:
     assert "Dur:" not in runtime_line
     assert "Err:" not in runtime_line
     assert shortcuts_line.index("(r)un CodexDeck") < shortcuts_line.index("(s)top")
-    assert shortcuts_line.index("(s)top") < shortcuts_line.index("(q)uit")
+    assert shortcuts_line.index("(s)top") < shortcuts_line.index("(k)skip")
+    assert shortcuts_line.index("(k)skip") < shortcuts_line.index("(q)uit")
     assert shortcuts_line.index("(q)uit") < shortcuts_line.index("(e)dit")
     assert shortcuts_line.index("(e)dit") < shortcuts_line.index("re(l)oad")
     assert "(e)dit" in shortcuts_line
@@ -311,6 +399,8 @@ def test_render_uses_compact_mode_for_small_terminal() -> None:
     lines = frame.splitlines()
     assert len(lines) == 10
     assert all(len(line) == 79 for line in lines)
+    assert "⡎⠑ ⢀⡀ ⢀⣸" in frame
+    assert "⠣⠔ ⠣⠜ ⠣⠼" in frame
     assert "compact mode" in frame
     assert "(r)un" in frame
     assert "(n)ew" in frame

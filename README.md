@@ -156,6 +156,7 @@ python -m codexdeck
 | --- | --- |
 | `r` | Run Codex on the current plan |
 | `s` | Stop the active run |
+| `k` | Skip the current open task |
 | `q` | Quit, with confirmation |
 | `e` | Edit `AI_TODO.md` |
 | `n` | Add a new task |
@@ -173,7 +174,7 @@ CodexDeck reads `codexdeck.conf` from the launch folder when present, then appli
 Minimal example:
 
 ```text
-CODEX_CMD=codex exec --model {model} "Read {todo}. Work on the first unchecked task only."
+CODEX_CMD=codex exec --model {model} --skip-git-repo-check "Read {todo}. Work on the first unchecked task only."
 CODEX_MODELS=gpt-5.5,gpt-5.4-mini
 CODEX_PERMISSIONS=read-only,workspace-write
 ```

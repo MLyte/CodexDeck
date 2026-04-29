@@ -8,7 +8,7 @@ The config file format is one `KEY=VALUE` pair per line. Empty lines and `#` com
 
 | Key | Default | Purpose |
 | --- | --- | --- |
-| `CODEX_CMD` | `codex {todo}` | Command used to start Codex |
+| `CODEX_CMD` | `codex exec --model {model} --skip-git-repo-check "Read {todo}. Work on the first unchecked task only."` | Command used to start Codex |
 | `CODEX_MODEL` | `gpt-5.5` | Current model label |
 | `CODEX_MODELS` | built in list | Comma-separated labels cycled by `m` |
 | `CODEX_FAST_MODEL` | `gpt-5.3-codex-spark` | Model label used when fast mode is on |
@@ -39,11 +39,10 @@ Relative paths are resolved against the folder where you launch `codexdeck`.
 Example:
 
 ```text
-CODEX_CMD=codex exec --model {model} --sandbox {permission} "Read {todo}. Work on the first unchecked task only."
+CODEX_CMD=codex exec --model {model} --skip-git-repo-check --sandbox {permission} "Read {todo}. Work on the first unchecked task only."
 CODEX_MODELS=gpt-5.5,gpt-5.4,gpt-5.4-mini
 CODEX_FAST_MODEL=gpt-5.4-mini
 CODEX_PERMISSIONS=read-only,workspace-write
 ```
 
 Keep the prompt inside `CODEX_CMD` in English if it is sent directly to the model.
-

@@ -62,64 +62,6 @@ class ProcessHandle(Protocol):
 PopenFactory = Callable[..., ProcessHandle]
 
 
-class _PtyProcessHandle:
-    def __init__(self, process: ProcessHandle, stdout: TextIO, stdin: TextIO | None = None) -> None:
-        self._process = process
-        self.stdout = stdout
-        self.stdin = stdin
-
-    @property
-    def pid(self) -> int:
-        return self._process.pid
-
-    def poll(self) -> Optional[int]:
-        return self._process.poll()
-
-    def terminate(self) -> None:
-        self._process.terminate()
-
-    def kill(self) -> None:
-        self._process.kill()
-
-    def send_signal(self, sig: int) -> None:
-        self._process.send_signal(sig)
-
-    def wait(self, timeout: Optional[float] = None) -> int:
-        return self._process.wait(timeout=timeout)
-
-    def close(self) -> None:
-        if not self.stdout.closed:
-            self.stdout.close()
-        if self.stdin is not None and not self.stdin.closed:
-            self.stdin.close()
-
-
-def _spawn_with_pty(factory: PopenFactory, args: list[str], kwargs: dict[str, object]) -> ProcessHandle:
-    import pty
-
-    master_fd, slave_fd = pty.openpty()
-    try:
-        process = factory(
-            args,
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            **kwargs,
-        )
-    except Exception:
-        os.close(master_fd)
-        os.close(slave_fd)
-        raise
-    os.close(slave_fd)
-    stdout = os.fdopen(master_fd, "r", encoding="utf-8", errors="replace", newline="")
-    try:
-        stdin = os.fdopen(os.dup(master_fd), "w", encoding="utf-8", errors="replace", buffering=1)
-    except Exception:
-        stdout.close()
-        raise
-    return _PtyProcessHandle(process, stdout, stdin)
-
-
 @dataclass(frozen=True)
 class RunMetrics:
     runs_total: int
@@ -221,6 +163,20 @@ def build_command(command: str | Sequence[str], todo_path: str | os.PathLike[str
     return args
 
 
+def split_codex_exec_stdin_prompt(args: Sequence[str]) -> tuple[list[str], Optional[str]]:
+    prepared = list(args)
+    if len(prepared) < 3:
+        return prepared, None
+    executable = Path(prepared[0]).name.lower()
+    if executable not in {"codex", "codex.exe"} or prepared[1] != "exec":
+        return prepared, None
+    if prepared[-1] == "-":
+        return prepared, None
+    if prepared[-1].startswith("-"):
+        return prepared, None
+    return [*prepared[:-1], "-"], prepared[-1]
+
+
 class CodexProcessRunner:
     def __init__(
         self,
@@ -272,23 +228,20 @@ class CodexProcessRunner:
             self._run_history.clear()
             try:
                 args = build_command(self.command, todo_path)
-                if os.name == "nt" or self._popen_factory is not subprocess.Popen:
-                    popen_kwargs: dict[str, object] = {
-                        "stdout": subprocess.PIPE,
-                        "stderr": subprocess.STDOUT,
-                        "stdin": subprocess.PIPE,
-                        "text": True,
-                        "bufsize": 1,
-                    }
-                    if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
-                        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-                    process = self._popen_factory(args, **popen_kwargs)
-                else:
-                    popen_kwargs = {
-                        "text": True,
-                        "bufsize": 1,
-                    }
-                    process = _spawn_with_pty(self._popen_factory, args, popen_kwargs)
+                args, stdin_prompt = split_codex_exec_stdin_prompt(args)
+                popen_kwargs: dict[str, object] = {
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.STDOUT,
+                    "stdin": subprocess.PIPE if stdin_prompt is not None else subprocess.DEVNULL,
+                    "text": True,
+                    "bufsize": 1,
+                }
+                if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                    popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+                process = self._popen_factory(args, **popen_kwargs)
+                if stdin_prompt is not None and process.stdin is not None:
+                    process.stdin.write(stdin_prompt)
+                    process.stdin.close()
             except Exception as exc:
                 self._record_error_locked()
                 self.last_error = f"POPEN_FAILED: {exc}"
@@ -433,7 +386,12 @@ class CodexProcessRunner:
     def send_input(self, text: str) -> bool:
         payload = text if text.endswith("\n") else f"{text}\n"
         with self._lock:
-            if self._process is None or self._process.stdin is None or not self._is_running_locked():
+            if (
+                self._process is None
+                or self._process.stdin is None
+                or getattr(self._process.stdin, "closed", False)
+                or not self._is_running_locked()
+            ):
                 return False
             try:
                 self._process.stdin.write(payload)
@@ -484,9 +442,6 @@ class CodexProcessRunner:
             thread.join(timeout=1.0)
         if thread is None or not thread.is_alive():
             process = self._process
-            close = getattr(process, "close", None) if process is not None else None
-            if callable(close):
-                close()
             self._reader_thread = None
 
     def _read_stdout(self, run_id: str, process: ProcessHandle) -> None:

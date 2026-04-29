@@ -14,13 +14,39 @@ from codexdeck_runner import (
     ProcessAlreadyRunning,
     RunnerState,
     build_command,
+    split_codex_exec_stdin_prompt,
 )
 
 
+class FakeStdin:
+    def __init__(self) -> None:
+        self.payload = ""
+        self.closed = False
+        self.flushed = False
+
+    def write(self, text: str) -> int:
+        self.payload += text
+        return len(text)
+
+    def flush(self) -> None:
+        self.flushed = True
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class FakeProcess:
-    def __init__(self, *, pid: int = 123, stdout: str = "", returncode: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        pid: int = 123,
+        stdout: str = "",
+        returncode: int | None = None,
+        stdin: FakeStdin | None = None,
+    ) -> None:
         self.pid = pid
         self.stdout = io.StringIO(stdout)
+        self.stdin = stdin
         self.returncode = returncode
         self.terminated = False
         self.killed = False
@@ -70,6 +96,22 @@ def test_build_command_appends_todo_when_placeholder_is_absent(tmp_path: Path) -
     assert build_command(["codex", "run"], todo) == ["codex", "run", str(todo)]
 
 
+def test_split_codex_exec_stdin_prompt_moves_final_prompt_to_stdin() -> None:
+    args, stdin_prompt = split_codex_exec_stdin_prompt(
+        ["codex", "exec", "--model", "gpt-5.4", "Read AI_TODO.md"]
+    )
+
+    assert args == ["codex", "exec", "--model", "gpt-5.4", "-"]
+    assert stdin_prompt == "Read AI_TODO.md"
+
+
+def test_split_codex_exec_stdin_prompt_keeps_existing_stdin_marker() -> None:
+    args, stdin_prompt = split_codex_exec_stdin_prompt(["codex", "exec", "--model", "gpt-5.4", "-"])
+
+    assert args == ["codex", "exec", "--model", "gpt-5.4", "-"]
+    assert stdin_prompt is None
+
+
 def test_start_success_uses_popen_factory(tmp_path: Path) -> None:
     process = FakeProcess(stdout="hello\n", returncode=None)
     seen: dict[str, object] = {}
@@ -87,10 +129,34 @@ def test_start_success_uses_popen_factory(tmp_path: Path) -> None:
     assert status.pid == 123
     assert seen["args"][0] == ["codex", str(tmp_path / "AI_TODO.md")]
     assert seen["kwargs"]["text"] is True
+    assert seen["kwargs"]["stdin"] == subprocess.DEVNULL
 
 
-@pytest.mark.skipif(os.name == "nt", reason="PTY support is POSIX-only")
-def test_start_uses_pty_stdout_on_posix(tmp_path: Path) -> None:
+def test_start_sends_codex_exec_prompt_through_stdin(tmp_path: Path) -> None:
+    stdin = FakeStdin()
+    process = FakeProcess(stdout="hello\n", returncode=None, stdin=stdin)
+    seen: dict[str, object] = {}
+
+    def factory(*args: object, **kwargs: object) -> FakeProcess:
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return process
+
+    runner = CodexProcessRunner(
+        'codex exec --model gpt-5.4 "Read {todo}. Work on first task."',
+        tmp_path / "logs" / "agent.log",
+        popen_factory=factory,
+    )
+
+    runner.start(tmp_path / "AI_TODO.md")
+
+    assert seen["args"][0] == ["codex", "exec", "--model", "gpt-5.4", "-"]
+    assert seen["kwargs"]["stdin"] == subprocess.PIPE
+    assert stdin.payload == f"Read {tmp_path / 'AI_TODO.md'}. Work on first task."
+    assert stdin.closed is True
+
+
+def test_start_uses_batch_pipes_not_a_tty(tmp_path: Path) -> None:
     todo = tmp_path / "AI_TODO.md"
     todo.write_text("- [ ] task\n", encoding="utf-8")
     runner = CodexProcessRunner(
@@ -102,7 +168,7 @@ def test_start_uses_pty_stdout_on_posix(tmp_path: Path) -> None:
     status = runner.wait()
 
     assert status.returncode == 0
-    assert any("True" in line for line in runner.logs())
+    assert any("False" in line for line in runner.logs())
 
 
 def test_rejects_second_process(tmp_path: Path) -> None:

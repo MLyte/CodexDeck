@@ -22,13 +22,14 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from shlex import join as shlex_join
 from shlex import split as shlex_split
 from typing import Callable, Optional, Protocol, TextIO
 
 from codexdeck import __version__
 from codexdeck.core import CockpitConfig, ConfigError, TodoTask, parse_todo_file
 from codexdeck.runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessNotRunning, RunStatus, RunnerState
-from codexdeck.ui import RenderStatus, clamp_task_offset, format_duration, render_frame, truncate
+from codexdeck.ui import RenderStatus, clamp_task_offset, clean_terminal_text, format_duration, render_frame, truncate
 
 
 PROMPT_KEYWORDS = (
@@ -262,6 +263,9 @@ class Cockpit:
         self.permission = config.permission
         self.quit_confirmation = False
         self._run_prompt: str | None = None
+        self._answered_run_prompt: str | None = None
+        self._run_prompt_can_answer = False
+        self._prompt_log_start = 0
         self.task_input_active = False
         self.task_input_buffer = ""
         self.auto_mode = False
@@ -323,6 +327,9 @@ class Cockpit:
     def _start_codex(self) -> None:
         try:
             self._run_prompt = None
+            self._answered_run_prompt = None
+            self._run_prompt_can_answer = False
+            self._prompt_log_start = len(self.runner.logs())
             task = self._next_open_task()
             if not self.todo_path.exists():
                 self.runner.log_buffer.append("> AI_TODO.md not found. Press n to add the first task.")
@@ -372,6 +379,8 @@ class Cockpit:
                 uptime_seconds=getattr(runner_status, "uptime_seconds", None),
                 duration_seconds=getattr(runner_status, "duration_seconds", None),
                 message=self._activity_message(runner_status),
+                prompt=self._run_prompt or "",
+                prompt_can_answer=self._run_prompt_can_answer,
             ),
             width=width,
             height=height,
@@ -393,7 +402,9 @@ class Cockpit:
         if status.state == RunnerState.STOPPING:
             return f"Stopping {self.agent_label} on {self.active_task_label or self.last_task_label}."
         if self._run_prompt:
-            return f"Codex is waiting: {self._truncate(self._run_prompt, 85)} (press y or n)."
+            if self._run_prompt_can_answer:
+                return "Codex is waiting for your answer."
+            return "Codex asked a question. Edit TODO, rerun, or skip."
         if running:
             return f"[{self._activity_spinner()}] {self.agent_label} is running on {self.active_task_label}."
         if self.quit_confirmation:
@@ -435,10 +446,13 @@ class Cockpit:
     def _display_logs(self, logs: list[str]) -> list[str]:
         visible: list[str] = []
         for line in logs:
-            visible.append(self._normalize_log_line(line))
+            normalized = self._normalize_log_line(line)
+            if normalized is not None:
+                visible.append(normalized)
         return visible
 
-    def _normalize_log_line(self, line: str) -> str:
+    def _normalize_log_line(self, line: str) -> str | None:
+        line = clean_terminal_text(line)
         codex_output = re.match(
             r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s+\[[0-9a-f]{32}\]\s+",
             line,
@@ -449,6 +463,8 @@ class Cockpit:
         text = re.sub(r"started pid=\d+", "Run started.", text)
         text = text.replace("finished rc=0", "Run completed successfully.")
         text = re.sub(r"finished rc=(-?\d+)", r"Run exited with code \1.", text)
+        if text.strip() == "Reading additional input from stdin...":
+            return None
         if re.match(r"codex_stub mode=\w+\s+todo=.*", text):
             text = "Simulation started."
         if codex_output:
@@ -458,7 +474,9 @@ class Cockpit:
     @staticmethod
     def _looks_like_prompt(line: str) -> bool:
         text = line.strip()
-        if not text or len(text) > 300:
+        if not text or len(text) > 500:
+            return False
+        if text.startswith((">", "Action required:", "Answer:")):
             return False
         if PROMPT_HINT_RE.search(text):
             return True
@@ -467,27 +485,41 @@ class Cockpit:
             return True
         return PROMPT_START_RE.search(text) is not None
 
+    def _clean_prompt_text(self, line: str) -> str:
+        text = line.strip()
+        prefix = f"{self.agent_label} output:"
+        if text.lower().startswith(prefix.lower()):
+            text = text[len(prefix) :].strip()
+        text = re.sub(r"^(?:codex output:\s*)+", "", text, flags=re.IGNORECASE).strip()
+        return re.sub(r"\s+", " ", text)
+
     def _refresh_run_prompt(self, status: RunStatus) -> None:
-        if not self._status_running(status):
-            self._run_prompt = None
-            return
         prompt = None
-        for line in reversed(self.runner.logs()):
+        for line in reversed(self.runner.logs()[self._prompt_log_start :]):
             normalized = self._normalize_log_line(line)
+            if normalized is None:
+                continue
             if self._looks_like_prompt(normalized):
-                prompt = normalized
+                prompt = self._clean_prompt_text(normalized)
                 break
+        if prompt is not None and prompt == self._answered_run_prompt:
+            return
         if prompt is not None and prompt != self._run_prompt:
             self._run_prompt = prompt
-            self.runner.log_buffer.append(f"> Codex asks: {prompt}")
+            self._run_prompt_can_answer = self._status_running(status)
 
     def _submit_run_prompt_answer(self, answer: str) -> None:
         if not self._run_prompt:
             return
+        if not self._run_prompt_can_answer:
+            self.runner.log_buffer.append("> Codex is no longer waiting for input. Edit AI_TODO.md, rerun, or skip this step.")
+            return
         if self.runner.send_input(answer):
             self._record_user_event(f"codex prompt answered | prompt={self._run_prompt} | answer={answer}")
+            self._answered_run_prompt = self._run_prompt
             self.runner.log_buffer.append(f"> Sent '{answer}' to Codex.")
             self._run_prompt = None
+            self._run_prompt_can_answer = False
         else:
             self.runner.log_buffer.append("> Cannot send input to Codex. Press s to stop the run, then run again.")
 
@@ -496,6 +528,8 @@ class Cockpit:
             self._submit_run_prompt_answer("y")
         elif key in {"n", "\x1b"}:
             self._submit_run_prompt_answer("n")
+        elif key == "s":
+            self.stop(block=False)
         else:
             self.runner.log_buffer.append("> Waiting for confirmation: press y to accept, n to decline.")
         return
@@ -505,7 +539,8 @@ class Cockpit:
         return [
             "Help: CodexDeck keeps AI_TODO.md visible, runs one Codex process, and streams output.",
             "(r)un first open task | (s)top active run | (q)uit with confirmation.",
-            "(e)dit opens AI_TODO.md in nano | (n)ew: Ctrl-S saves, Esc cancels | re(l)oad.",
+            "(e)dit opens AI_TODO.md in nano | (k)skip checks the current task as skipped.",
+            "(n)ew: Ctrl-S saves, Esc cancels | re(l)oad.",
             "(M)odel, (F)ast, (Pe)rm, Aut(o) adjust next run options | \u2191\u2193 scroll tasks.",
             "made by lyte | GitHub: https://github.com/MLyte/CodexDeck",
         ]
@@ -527,7 +562,33 @@ class Cockpit:
                 .replace("{permission}", self.permission)
                 .replace("{fast}", "1" if self.fast_mode else "0")
             )
+        else:
+            command = self._inject_codex_exec_model(command)
+        command = self._inject_codex_exec_skip_git_check(command)
         self.runner.command = command
+
+    def _inject_codex_exec_model(self, command: str) -> str:
+        try:
+            args = shlex_split(command)
+        except ValueError:
+            return command
+        if len(args) < 2 or args[0] != "codex" or args[1] != "exec":
+            return command
+        if "--model" in args or "-m" in args:
+            return command
+        return shlex_join([args[0], args[1], "--model", self._effective_model(), *args[2:]])
+
+    @staticmethod
+    def _inject_codex_exec_skip_git_check(command: str) -> str:
+        try:
+            args = shlex_split(command)
+        except ValueError:
+            return command
+        if len(args) < 2 or args[0] != "codex" or args[1] != "exec":
+            return command
+        if "--skip-git-repo-check" in args:
+            return command
+        return shlex_join([args[0], args[1], "--skip-git-repo-check", *args[2:]])
 
     def _next_open_task(self) -> TodoTask | None:
         return next((task for task in self.tasks if not task.done), None)
@@ -579,6 +640,45 @@ class Cockpit:
         self.task_input_buffer = ""
         self.quit_confirmation = False
         self.runner.log_buffer.append("> New task input. Type the task, then press Ctrl-S to save or Esc to cancel.")
+
+    def _skip_current_task(self) -> None:
+        status = self.runner.status()
+        if self._status_running(status):
+            self.runner.log_buffer.append("> Stop the active Codex run before skipping a task.")
+            return
+        task = None
+        if self.active_task_id:
+            task = next((task_item for task_item in self.tasks if task_item.id == self.active_task_id and not task_item.done), None)
+        if task is None:
+            task = self._next_open_task()
+        if task is None:
+            self.runner.log_buffer.append("> No open task to skip.")
+            return
+        try:
+            lines = self.todo_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            line_index = task.line - 1
+            if line_index < 0 or line_index >= len(lines):
+                raise OSError(f"task line {task.line} is out of range")
+            raw = lines[line_index]
+            if "# skipped" not in raw:
+                raw = f"{raw} # skipped"
+            updated = re.sub(r"^(\s*[-*]\s+\[) (\]\s+)", r"\1x\2", raw, count=1)
+            if updated == raw and "[ ]" in raw:
+                updated = raw.replace("[ ]", "[x]", 1)
+            lines[line_index] = updated
+            self.todo_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as exc:
+            self.runner.log_buffer.append(f"[ERROR] cannot skip task: {exc}")
+            return
+        self._answered_run_prompt = self._run_prompt
+        self._run_prompt = None
+        self._run_prompt_can_answer = False
+        self.last_task_label = self._task_label(task)
+        self.active_task_id = None
+        self.active_task_label = ""
+        self.load_todo_if_changed(force=True)
+        self.runner.log_buffer.append(f"> Skipped task: {self.last_task_label}.")
+        self._record_user_event(f"task skipped | target={self.last_task_label}")
 
     def _handle_task_input_key(self, key: str) -> None:
         if key in {"\x1b", "ESC"}:
@@ -811,7 +911,7 @@ class Cockpit:
                         self._handle_task_input_key(key)
                     else:
                         k = key.lower()
-                        if self._run_prompt is not None:
+                        if self._run_prompt is not None and self._run_prompt_can_answer:
                             self._handle_run_prompt_key(k)
                         elif self.quit_confirmation:
                             if k == "y":
@@ -831,6 +931,8 @@ class Cockpit:
                             self.stop(block=False)
                         elif k == "s":
                             self.runner.log_buffer.append("> No active run to stop.")
+                        elif k == "k":
+                            self._skip_current_task()
                         elif k == "l":
                             self.load_todo_if_changed(force=True)
                             self._record_user_event(f"TODO reloaded | tasks={len(self.tasks)}")

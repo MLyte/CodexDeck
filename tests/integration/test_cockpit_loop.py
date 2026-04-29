@@ -52,6 +52,7 @@ class FakeRunner:
         self.stopped = 0
         self.command = "fake {todo}"
         self.started_command = ""
+        self.sent_inputs: list[str] = []
 
     def start(self, todo_path: Path) -> FakeStatus:
         assert todo_path.exists()
@@ -72,6 +73,10 @@ class FakeRunner:
 
     def logs(self) -> list[str]:
         return self.log_buffer.lines
+
+    def send_input(self, text: str) -> bool:
+        self.sent_inputs.append(text)
+        return True
 
 
 class AutoCompletingRunner(FakeRunner):
@@ -559,6 +564,62 @@ def test_runtime_options_fill_command_placeholders_on_next_run(tmp_path: Path) -
     assert runner.started_command == "codex --model fast --permission workspace-write --fast 1 {todo}"
 
 
+def test_codex_exec_without_model_placeholder_gets_selected_model(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    config = make_config(tmp_path)
+    config = CockpitConfig(
+        todo_path=config.todo_path,
+        log_path=config.log_path,
+        user_log_path=config.user_log_path,
+        codex_cmd='codex exec --color never "Read {todo}"',
+        model="normal",
+        models=("normal", "codex-plus"),
+        fast_model="fast",
+        refresh_hz=config.refresh_hz,
+    )
+    runner = FakeRunner()
+    key_reader = FakeKeyReader(["m", "r", "q", "y"])
+    cockpit = module.Cockpit(
+        config,
+        key_reader_factory=lambda: key_reader,
+        terminal_size=lambda: (120, 24),
+        sleeper=lambda _delay: None,
+        screen_writer=lambda _frame: None,
+        runner=runner,
+    )
+
+    cockpit.loop()
+
+    assert runner.started_command == "codex exec --skip-git-repo-check --model codex-plus --color never 'Read {todo}'"
+
+
+def test_codex_exec_without_skip_git_repo_check_gets_it_injected(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    config = make_config(tmp_path)
+    config = CockpitConfig(
+        todo_path=config.todo_path,
+        log_path=config.log_path,
+        user_log_path=config.user_log_path,
+        codex_cmd='codex exec --model {model} "Read {todo}"',
+        model="normal",
+        refresh_hz=config.refresh_hz,
+    )
+    runner = FakeRunner()
+    key_reader = FakeKeyReader(["r", "q", "y"])
+    cockpit = module.Cockpit(
+        config,
+        key_reader_factory=lambda: key_reader,
+        terminal_size=lambda: (120, 24),
+        sleeper=lambda _delay: None,
+        screen_writer=lambda _frame: None,
+        runner=runner,
+    )
+
+    cockpit.loop()
+
+    assert runner.started_command == "codex exec --skip-git-repo-check --model normal 'Read {todo}'"
+
+
 def test_auto_mode_pauses_when_completed_run_leaves_same_task_open(tmp_path: Path) -> None:
     module = load_cockpit_module()
     config = make_config(tmp_path)
@@ -886,6 +947,7 @@ def test_display_logs_simplifies_runner_noise(tmp_path: Path) -> None:
             "2026-04-29T10:18:17 [INFO] run abcdef1234567890abcdef1234567890 started pid=42987",
             "2026-04-29T10:18:17 [abcdef1234567890abcdef1234567890] codex_stub mode=success todo=/tmp/AI_TODO.md",
             "2026-04-29T10:18:17 [abcdef1234567890abcdef1234567890] stub success",
+            "2026-04-29T10:18:17 [abcdef1234567890abcdef1234567890] Reading additional input from stdin...",
             "2026-04-29T10:18:17 [INFO] run abcdef1234567890abcdef1234567890 finished rc=0",
         ]
     )
@@ -896,6 +958,85 @@ def test_display_logs_simplifies_runner_noise(tmp_path: Path) -> None:
         "Stub Codex (simulation) output: stub success",
         "Run completed successfully.",
     ]
+
+
+def test_loop_shows_prompt_as_action_required_without_repeating_log(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    runner = FakeRunner()
+    runner.state = RunnerState.RUNNING
+    runner.log_buffer.append(
+        "2026-04-29T10:18:17 [abcdef1234567890abcdef1234567890] "
+        "Tu veux que je coche cette tache ? (y/n)"
+    )
+    key_reader = FakeKeyReader([None, "y", "q", "y"])
+    frames: list[str] = []
+    cockpit = module.Cockpit(
+        make_config(tmp_path),
+        key_reader_factory=lambda: key_reader,
+        terminal_size=lambda: (100, 24),
+        sleeper=lambda _delay: None,
+        screen_writer=frames.append,
+        runner=runner,
+    )
+
+    cockpit.loop()
+
+    assert runner.sent_inputs == ["y"]
+    assert any("Action Required" in frame for frame in frames)
+    assert any("Tu veux que je coche cette tache ? (y/n)" in frame for frame in frames)
+    assert not any("Codex asks" in line for line in runner.log_buffer.lines)
+
+
+def test_loop_shows_completed_run_question_without_blocking_skip(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    config = make_config(tmp_path)
+    config.todo_path.write_text("- [ ] first task\n- [ ] second task\n", encoding="utf-8")
+    runner = FakeRunner()
+    runner.state = RunnerState.IDLE
+    runner.log_buffer.append(
+        "2026-04-29T10:18:17 [abcdef1234567890abcdef1234567890] "
+        "Est-ce que tu préfères rouge ou bleu ?"
+    )
+    key_reader = FakeKeyReader([None, "k", "q", "y"])
+    frames: list[str] = []
+    cockpit = module.Cockpit(
+        config,
+        key_reader_factory=lambda: key_reader,
+        terminal_size=lambda: (100, 24),
+        sleeper=lambda _delay: None,
+        screen_writer=frames.append,
+        runner=runner,
+    )
+
+    cockpit.loop()
+
+    todo_text = config.todo_path.read_text(encoding="utf-8")
+    assert "- [x] first task # skipped" in todo_text
+    assert "- [ ] second task" in todo_text
+    assert any("Question from Codex" in frame for frame in frames)
+    assert any("Skipped task: line 1: first task" in line for line in runner.log_buffer.lines)
+    assert "task skipped | target=line 1: first task" in config.user_log_path.read_text(encoding="utf-8")
+
+
+def test_skip_key_marks_first_open_task_without_running_codex(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    config = make_config(tmp_path)
+    config.todo_path.write_text("- [x] done task\n- [ ] first open task\n- [ ] second open task\n", encoding="utf-8")
+    runner = FakeRunner()
+    key_reader = FakeKeyReader(["k", "q", "y"])
+    cockpit = module.Cockpit(
+        config,
+        key_reader_factory=lambda: key_reader,
+        terminal_size=lambda: (100, 24),
+        sleeper=lambda _delay: None,
+        screen_writer=lambda _frame: None,
+        runner=runner,
+    )
+
+    cockpit.loop()
+
+    assert runner.started == 0
+    assert "- [x] first open task # skipped" in config.todo_path.read_text(encoding="utf-8")
 
 
 def test_loop_reclamps_task_offset_when_terminal_shrinks(tmp_path: Path) -> None:

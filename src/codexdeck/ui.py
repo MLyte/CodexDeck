@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from textwrap import wrap
 from typing import Iterable, Protocol
@@ -26,6 +27,8 @@ class RenderStatus:
     uptime_seconds: float | None = None
     duration_seconds: float | None = None
     message: str = ""
+    prompt: str = ""
+    prompt_can_answer: bool = False
 
 
 UNICODE_BORDERS = {
@@ -60,8 +63,24 @@ CODEXDECK_ART = (
     "▀█████ ▀███▀ ████▀ ██▄▄▄ ██ ██ ████▀  ██▄▄▄ ▀████ ██ ██",
 )
 
+CODEXDECK_COMPACT_ART = (
+    "⡎⠑ ⢀⡀ ⢀⣸ ⢀⡀ ⡀⢀ ⡏⢱ ⢀⡀ ⢀⣀ ⡇⡠",
+    "⠣⠔ ⠣⠜ ⠣⠼ ⠣⠭ ⠜⠣ ⠧⠜ ⠣⠭ ⠣⠤ ⠏⠢",
+)
+
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def clean_terminal_text(text: str) -> str:
+    text = ANSI_ESCAPE_RE.sub("", text)
+    text = text.replace("\r", " ")
+    text = CONTROL_RE.sub("", text)
+    return text
+
 
 def truncate(text: str, width: int) -> str:
+    text = clean_terminal_text(text)
     if width <= 0:
         return ""
     if len(text) <= width:
@@ -119,8 +138,26 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
     version_text = f"v{status.version}" if status.version else "v0.0.0"
     width = max(1, width)
     height = max(1, height)
+    compact_keys = (
+        f"Keys: (r)un | (s)top | (k)skip | (q)uit | (e)dit | re(l)oad | (n)ew | (h)elp | {version_text}"
+    )
+    if show_help:
+        lines = [
+            *[line.center(width) for line in CODEXDECK_COMPACT_ART],
+            "compact mode",
+            "Help",
+            "CodexDeck keeps AI_TODO.md visible.",
+            "Options: (M)odel, (F)ast, (Pe)rm, Aut(o)",
+            compact_keys,
+            "made by lyte | https://github.com/MLyte/CodexDeck",
+        ]
+        lines = lines[:height]
+        while len(lines) < height:
+            lines.append("")
+        return "\n".join(_pad_line(line, width) for line in lines)
     lines = [
-        "CodexDeck compact mode",
+        *[line.center(width) for line in CODEXDECK_COMPACT_ART],
+        "compact mode",
         (
             f"Status: {status.state} | Up: {format_duration(status.uptime_seconds)} | "
             f"Dur: {format_duration(status.duration_seconds)} | Err: {status.errors}"
@@ -130,21 +167,15 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
             f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)}"
         ),
         f"Last run: {status.last_run}",
-        f"Keys: (r)un CodexDeck | (s)top | (q)uit | (e)dit | re(l)oad | (n)ew | \u2191\u2193 scroll | (h)elp | {version_text} | MIT",
+        compact_keys,
     ]
     if status.message:
         lines.insert(2, status.message)
-    if show_help:
-        lines.extend(
-            [
-                "",
-                "Help",
-                "CodexDeck keeps AI_TODO.md visible, runs one Codex process, and streams output.",
-                "Options: (M)odel, (F)ast, (Pe)rm, Aut(o)",
-                "Keys: (r)un, (s)top, (q)uit, (e)dit, re(l)oad, (n)ew, \u2191\u2193 scroll, (h)elp",
-                "made by lyte | https://github.com/MLyte/CodexDeck",
-            ]
-        )
+    if status.prompt:
+        label = "Action required" if status.prompt_can_answer else "Question from Codex"
+        lines.insert(3, f"{label}: {status.prompt}")
+        hint = "Answer: y yes | n no | s stop" if status.prompt_can_answer else "Next: e edit TODO | r rerun | k skip"
+        lines.insert(4, hint)
     lines = lines[:height]
     while len(lines) < height:
         lines.append("")
@@ -177,17 +208,29 @@ def render_frame(
         and content_width >= max(len(line) for line in CODEXDECK_ART)
         and height >= (30 if show_help else 22)
     )
-    header_h = len(CODEXDECK_ART) + 1 if show_header else 0
-    available_h = max(6, height - 11 - header_h)
-    min_task_h = 4 if available_h >= 8 else 3
-    task_h = max(min_task_h, min(8, available_h // 3 + 1))
-    summary_h = min(3, max(2, available_h - task_h - 2))
-    log_h = max(2, available_h - task_h - summary_h)
+    show_compact_header = not show_header and content_width >= max(len(line) for line in CODEXDECK_COMPACT_ART)
+    header_lines = CODEXDECK_ART if show_header else CODEXDECK_COMPACT_ART if show_compact_header else ()
+    header_h = len(header_lines) + 1 if header_lines else 0
+    prompt_h = 3 if status.prompt and not show_help else 0
+    available_h = max(4, height - 11 - header_h - (prompt_h + 2 if prompt_h else 0))
+    if show_help:
+        task_h = min(4, max(2, available_h // 3))
+        summary_h = 1
+        log_h = max(1, available_h - task_h - summary_h)
+    elif available_h <= 9:
+        task_h = 4 if available_h >= 6 else 3
+        summary_h = min(2, max(1, available_h - task_h - 1))
+        log_h = max(1, available_h - task_h - summary_h)
+    else:
+        min_task_h = 4 if available_h >= 6 else 3
+        task_h = max(min_task_h, min(8, available_h // 3 + 2))
+        summary_h = min(3, max(1, available_h - task_h - 1))
+        log_h = max(1, available_h - task_h - summary_h)
 
     rendered: list[str] = []
     rendered.append(borders["tl"] + borders["h"] * content_width + borders["tr"])
-    if show_header:
-        rendered.extend(borders["v"] + line.center(content_width) + borders["v"] for line in CODEXDECK_ART)
+    if header_lines:
+        rendered.extend(borders["v"] + line.center(content_width) + borders["v"] for line in header_lines)
         rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
     task_list = list(tasks)
     task_offset = clamp_task_offset(len(task_list), task_h, task_offset)
@@ -229,6 +272,26 @@ def render_frame(
     rendered.extend(borders["v"] + text.ljust(content_width) + borders["v"] for text in log_texts)
 
     rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
+    if prompt_h:
+        prompt_title = "Action Required" if status.prompt_can_answer else "Question from Codex"
+        rendered.append(borders["v"] + prompt_title.center(content_width) + borders["v"])
+        prompt_width = content_width - 2
+        prompt_lines = wrap(
+            status.prompt,
+            width=max(1, prompt_width),
+            break_long_words=False,
+            break_on_hyphens=False,
+        ) or [""]
+        prompt_texts = [truncate(line, prompt_width) for line in prompt_lines[:2]]
+        if status.prompt_can_answer:
+            prompt_texts.append("Answer: y yes | n no | Esc no | s stop")
+        else:
+            prompt_texts.append("Next: e edit TODO | r rerun | k skip")
+        while len(prompt_texts) < prompt_h:
+            prompt_texts.append("")
+        rendered.extend(borders["v"] + text.ljust(content_width) + borders["v"] for text in prompt_texts[:prompt_h])
+        rendered.append(borders["lm"] + borders["h"] * content_width + borders["rm"])
+
     rendered.append(borders["v"] + "Task Summary".center(content_width) + borders["v"])
     summary_texts = [truncate(line, content_width - 2) for line in summary_lines]
     while len(summary_texts) < summary_h:
@@ -251,7 +314,7 @@ def render_frame(
         f"(Pe)rm: {status.permission} | Aut(o): {_on_off(status.auto_mode)}"
     )
     shortcuts_line = (
-        f"Keys: (r)un CodexDeck | (s)top | (q)uit | (e)dit | re(l)oad | (n)ew | "
+        f"Keys: (r)un CodexDeck | (s)top | (k)skip | (q)uit | (e)dit | re(l)oad | (n)ew | "
         f"\u2191\u2193 scroll | (h)elp | v{status.version or '0.0.0'} | MIT"
     )
     rendered.append(borders["v"] + truncate(status_line, content_width).ljust(content_width) + borders["v"])

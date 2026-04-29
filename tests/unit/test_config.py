@@ -11,7 +11,10 @@ def test_config_from_env_uses_defaults_and_resolves_paths(tmp_path: Path) -> Non
     assert config.todo_path == tmp_path / "AI_TODO.md"
     assert config.log_path == tmp_path / "logs" / "agent.log"
     assert config.user_log_path == tmp_path / "logs" / "user.log"
-    assert config.codex_cmd == "codex {todo}"
+    assert config.codex_cmd == (
+        'codex exec --model {model} --skip-git-repo-check '
+        '"Read {todo}. Work on the first unchecked task only."'
+    )
     assert config.model == "gpt-5.5"
     assert config.models == (
         "gpt-5.5",
@@ -66,7 +69,10 @@ def test_config_from_env_reads_supported_values(tmp_path: Path) -> None:
 def test_config_absent_file_uses_defaults(tmp_path: Path) -> None:
     config = CockpitConfig.from_env({}, base_dir=tmp_path)
 
-    assert config.codex_cmd == "codex {todo}"
+    assert config.codex_cmd == (
+        'codex exec --model {model} --skip-git-repo-check '
+        '"Read {todo}. Work on the first unchecked task only."'
+    )
     assert config.todo_path == tmp_path / "AI_TODO.md"
 
 

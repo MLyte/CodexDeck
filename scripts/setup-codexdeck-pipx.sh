@@ -4,13 +4,14 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  setup-codexdeck-pipx.sh [--auto|--local|--git-latest] [--tag <tag>] [--inspect-logs]
+  setup-codexdeck-pipx.sh [--auto|--local|--github|--git-latest] [--tag <tag>] [--inspect-logs]
 
 Modes:
   --auto         Try local build/install first, fallback to GitHub release/tag if needed.
   --local        Build from repo only. If no wheel exists, runs `uv build`.
-  --git-latest   Install from git. Uses latest local v* tag if present, else main branch.
-  --tag <tag>    Install from a specific git tag when used with --git-latest.
+  --github       Install from GitHub. Uses latest local v* tag if present, else main branch.
+  --git-latest   Alias of --github.
+  --tag <tag>    Install from a specific git tag when used with --github/--git-latest.
   --inspect-logs Also show resolved log paths (print-config) and tails of log files.
   --follow-logs  Keep following log files after install. Implies --inspect-logs.
 EOF
@@ -18,8 +19,9 @@ EOF
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ORIGINAL_PATH="${PATH:-}"
 MODE="auto"
-GIT_TAG="${1:-}"
+GIT_TAG=""
 INSPECT_LOGS=false
 FOLLOW_LOGS=false
 
@@ -29,15 +31,15 @@ while [ "$#" -gt 0 ]; do
       usage
       exit 0
       ;;
-    --auto)
+    --auto|-auto)
       MODE="auto"
       shift
       ;;
-    --local)
+    --local|-local)
       MODE="local"
       shift
       ;;
-    --git-latest)
+    --github|-github|--git-latest|-git-latest)
       MODE="git-latest"
       shift
       ;;
@@ -68,9 +70,9 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-export XDG_STATE_HOME=/tmp/pipx-state
-export PIPX_HOME=/tmp/pipx-home
-export PIPX_BIN_DIR=/tmp/pipx-bin
+export XDG_STATE_HOME="${CODEXDECK_XDG_STATE_HOME:-$HOME/.local/state}"
+export PIPX_HOME="${CODEXDECK_PIPX_HOME:-$HOME/.local/share/pipx}"
+export PIPX_BIN_DIR="${CODEXDECK_PIPX_BIN_DIR:-$HOME/.local/bin}"
 mkdir -p "$XDG_STATE_HOME" "$PIPX_HOME" "$PIPX_BIN_DIR"
 export PATH="$PIPX_BIN_DIR:$PATH"
 
@@ -80,9 +82,8 @@ fi
 
 install_from_local() {
   cd "$REPO_ROOT"
-  if [ ! -d "dist" ] || ! ls dist/codexdeck-*.whl >/dev/null 2>&1; then
-    UV_CACHE_DIR=${UV_CACHE_DIR:-/tmp/uv-cache} uv build
-  fi
+  rm -rf dist
+  UV_CACHE_DIR=${UV_CACHE_DIR:-/tmp/uv-cache} uv build
   WHEEL_PATH="$(ls dist/codexdeck-*.whl | sort | tail -n 1)"
   if [ -z "$WHEEL_PATH" ] || [ ! -f "$WHEEL_PATH" ]; then
     echo "ERROR: No wheel found after build."
@@ -112,6 +113,101 @@ install_from_git() {
   fi
 }
 
+resolve_in_path() {
+  local binary="$1"
+  local path_value="$2"
+  local old_ifs="$IFS"
+  local seen=":"
+  local dir=""
+  IFS=':'
+  for dir in $path_value; do
+    if [ -z "$dir" ]; then
+      dir="."
+    fi
+    case "$seen" in
+      *":$dir:"*) continue ;;
+    esac
+    seen="${seen}${dir}:"
+    if [ -x "$dir/$binary" ]; then
+      printf '%s\n' "$dir/$binary"
+    fi
+  done
+  IFS="$old_ifs"
+}
+
+repair_temporary_pipx_shadow() {
+  local candidate="$1"
+  local pipx_entrypoint="$2"
+  case "$candidate" in
+    /tmp/pipx-bin/codexdeck)
+      if [ -L "$candidate" ] || [ -w "$(dirname "$candidate")" ]; then
+        ln -sfn "$pipx_entrypoint" "$candidate"
+        echo "Repaired temporary PATH shadow: $candidate -> $pipx_entrypoint"
+      fi
+      ;;
+  esac
+}
+
+diagnose_path_resolution() {
+  local pipx_entrypoint="$1"
+  local original_first=""
+  local current_first=""
+  local candidate=""
+  local reached_pipx=false
+
+  original_first="$(resolve_in_path codexdeck "$ORIGINAL_PATH" | head -n 1 || true)"
+  current_first="$(command -v codexdeck || true)"
+
+  echo "pipx-managed entrypoint: $pipx_entrypoint"
+  if [ -x "$pipx_entrypoint" ]; then
+    "$pipx_entrypoint" --version
+  else
+    echo "pipx-managed entrypoint not found."
+  fi
+
+  if [ -n "$current_first" ]; then
+    echo "script-resolved entrypoint: $current_first"
+    "$current_first" --version || true
+  else
+    echo "script-resolved entrypoint: not found in current PATH"
+  fi
+
+  if [ -n "$original_first" ]; then
+    echo "caller-shell first entrypoint before script PATH fix: $original_first"
+    "$original_first" --version || true
+  else
+    echo "caller-shell first entrypoint before script PATH fix: not found"
+  fi
+
+  while IFS= read -r candidate; do
+    if [ "$candidate" = "$pipx_entrypoint" ]; then
+      reached_pipx=true
+      continue
+    fi
+    if [ "$reached_pipx" = false ]; then
+      repair_temporary_pipx_shadow "$candidate" "$pipx_entrypoint"
+      if [ -n "${VIRTUAL_ENV:-}" ] && [ "$candidate" = "$VIRTUAL_ENV/bin/codexdeck" ]; then
+        echo "WARN: active virtualenv shadows pipx for this shell: $candidate"
+        echo "      Run: deactivate && hash -r"
+      else
+        echo "WARN: PATH entry can shadow pipx in your caller shell: $candidate"
+      fi
+    fi
+  done < <(resolve_in_path codexdeck "$ORIGINAL_PATH")
+
+  if [ -n "${VIRTUAL_ENV:-}" ]; then
+    echo "Active virtualenv: $VIRTUAL_ENV"
+  fi
+
+  echo
+  echo "Reliable launch command:"
+  echo "  $pipx_entrypoint"
+  echo "If plain 'codexdeck' resolves to an older version after this script:"
+  echo "  deactivate  # if a virtualenv is active"
+  echo "  hash -r"
+  echo "  export PATH=\"$PIPX_BIN_DIR:\$PATH\""
+}
+
 if [ "$MODE" = "local" ]; then
   install_from_local
 elif [ "$MODE" = "git-latest" ]; then
@@ -131,31 +227,7 @@ echo
 echo "Post-install checks:"
 
 PIPX_BIN_CMD="$PIPX_BIN_DIR/codexdeck"
-PATH_BIN="$(command -v codexdeck || true)"
-
-if [ -x "$PIPX_BIN_CMD" ]; then
-  echo "pipx-managed entrypoint: $PIPX_BIN_CMD"
-  "$PIPX_BIN_CMD" --version
-else
-  echo "pipx-managed entrypoint not found at: $PIPX_BIN_CMD"
-fi
-
-if [ -n "$PATH_BIN" ]; then
-  echo "shell-resolved entrypoint: $PATH_BIN"
-  "$PATH_BIN" --version
-else
-  echo "shell-resolved entrypoint: not found in current PATH"
-fi
-
-if [ -n "$PATH_BIN" ] && [ "$PATH_BIN" != "$PIPX_BIN_CMD" ]; then
-  echo "⚠️  PATH points to a different codexdeck executable than pipx."
-  echo "   Run: hash -r"
-  echo "   Consider using: $PIPX_BIN_CMD --version"
-fi
-
-if [ -n "${VIRTUAL_ENV:-}" ]; then
-  echo "Active virtualenv: $VIRTUAL_ENV"
-fi
+diagnose_path_resolution "$PIPX_BIN_CMD"
 
 if [ "$INSPECT_LOGS" = true ]; then
   echo
