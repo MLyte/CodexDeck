@@ -22,8 +22,10 @@ class FakeProcess:
         self.returncode = returncode
         self.terminated = False
         self.killed = False
+        self.signals: list[int] = []
         self.wait_calls = 0
         self.wait_timeout_once = False
+        self.wait_timeouts = 0
 
     def poll(self) -> int | None:
         return self.returncode
@@ -35,8 +37,14 @@ class FakeProcess:
         self.killed = True
         self.returncode = -9
 
+    def send_signal(self, sig: int) -> None:
+        self.signals.append(sig)
+
     def wait(self, timeout: float | None = None) -> int:
         self.wait_calls += 1
+        if self.wait_timeouts > 0:
+            self.wait_timeouts -= 1
+            raise subprocess.TimeoutExpired("fake", timeout)
         if self.wait_timeout_once and not self.killed:
             self.wait_timeout_once = False
             raise subprocess.TimeoutExpired("fake", timeout)
@@ -146,13 +154,27 @@ def test_stop_terminates_process(tmp_path: Path) -> None:
     runner.start(tmp_path / "AI_TODO.md")
     status = runner.stop()
 
-    assert process.terminated is True
+    assert process.signals
+    assert process.terminated is False
     assert process.killed is False
     assert status.state == RunnerState.IDLE
     assert runner._reader_thread is None
 
 
-def test_stop_kills_after_timeout(tmp_path: Path) -> None:
+def test_stop_terminates_immediately_when_interrupt_is_unavailable(tmp_path: Path) -> None:
+    process = FakeProcess(returncode=None)
+    process.send_signal = None  # type: ignore[method-assign]
+    runner = CodexProcessRunner(["codex"], tmp_path / "agent.log", popen_factory=lambda *a, **k: process)
+
+    runner.start(tmp_path / "AI_TODO.md")
+    status = runner.stop()
+
+    assert process.terminated is True
+    assert process.killed is False
+    assert status.state == RunnerState.IDLE
+
+
+def test_stop_terminates_after_interrupt_timeout(tmp_path: Path) -> None:
     process = FakeProcess(returncode=None)
     process.wait_timeout_once = True
     runner = CodexProcessRunner(
@@ -165,6 +187,28 @@ def test_stop_kills_after_timeout(tmp_path: Path) -> None:
     runner.start(tmp_path / "AI_TODO.md")
     status = runner.stop()
 
+    assert process.signals
+    assert process.terminated is True
+    assert process.killed is False
+    assert status.state == RunnerState.IDLE
+    assert status.returncode == 0
+    assert runner._reader_thread is None
+
+
+def test_stop_kills_after_interrupt_and_terminate_timeout(tmp_path: Path) -> None:
+    process = FakeProcess(returncode=None)
+    process.wait_timeouts = 2
+    runner = CodexProcessRunner(
+        ["codex"],
+        tmp_path / "agent.log",
+        popen_factory=lambda *a, **k: process,
+        stop_timeout=0.001,
+    )
+
+    runner.start(tmp_path / "AI_TODO.md")
+    status = runner.stop()
+
+    assert process.signals
     assert process.terminated is True
     assert process.killed is True
     assert status.state == RunnerState.IDLE

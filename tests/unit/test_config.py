@@ -41,6 +41,91 @@ def test_config_from_env_reads_supported_values(tmp_path: Path) -> None:
     assert config.max_log_lines == 42
 
 
+def test_config_absent_file_uses_defaults(tmp_path: Path) -> None:
+    config = CockpitConfig.from_env({}, base_dir=tmp_path)
+
+    assert config.codex_cmd == "codex {todo}"
+    assert config.todo_path == tmp_path / "AI_TODO.md"
+
+
+def test_config_file_reads_supported_values(tmp_path: Path) -> None:
+    (tmp_path / "codexdeck.conf").write_text(
+        "\n".join(
+            [
+                "# CodexDeck local config",
+                "CODEX_CMD = python tests/stubs/codex_stub.py --mode success {todo}",
+                "CODEX_MODEL=gpt-conf",
+                "RUN_TIMEOUT_SECONDS=30",
+                "STOP_TIMEOUT_SECONDS=3",
+                "STATE_REFRESH_HZ=12",
+                "MAX_LOG_LINES=77",
+                "CODEX_TODO_PATH=config-todo.md",
+                "CODEX_LOG_PATH=config-logs/agent.log",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = CockpitConfig.from_env({}, base_dir=tmp_path)
+
+    assert config.todo_path == tmp_path / "config-todo.md"
+    assert config.log_path == tmp_path / "config-logs" / "agent.log"
+    assert config.codex_cmd == "python tests/stubs/codex_stub.py --mode success {todo}"
+    assert config.model == "gpt-conf"
+    assert config.run_timeout == 30.0
+    assert config.stop_timeout == 3.0
+    assert config.refresh_hz == 12.0
+    assert config.max_log_lines == 77
+
+
+def test_env_values_override_config_file(tmp_path: Path) -> None:
+    (tmp_path / "codexdeck.conf").write_text(
+        "\n".join(
+            [
+                "CODEX_CMD=from-file {todo}",
+                "CODEX_MODEL=file-model",
+                "MAX_LOG_LINES=10",
+                "CODEX_TODO_PATH=file.md",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = CockpitConfig.from_env(
+        {
+            "CODEX_CMD": "from-env {todo}",
+            "CODEX_MODEL": "env-model",
+            "MAX_LOG_LINES": "20",
+            "CODEX_TODO_PATH": "env.md",
+        },
+        base_dir=tmp_path,
+    )
+
+    assert config.codex_cmd == "from-env {todo}"
+    assert config.model == "env-model"
+    assert config.max_log_lines == 20
+    assert config.todo_path == tmp_path / "env.md"
+
+
+def test_config_path_can_be_selected_from_env(tmp_path: Path) -> None:
+    custom = tmp_path / "custom.conf"
+    custom.write_text("CODEX_MODEL=custom-model\n", encoding="utf-8")
+
+    config = CockpitConfig.from_env({"CODEX_CONFIG_PATH": str(custom)}, base_dir=tmp_path)
+
+    assert config.model == "custom-model"
+
+
+def test_config_file_rejects_invalid_lines(tmp_path: Path) -> None:
+    (tmp_path / "codexdeck.conf").write_text("not-a-setting\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError) as exc_info:
+        CockpitConfig.from_env({}, base_dir=tmp_path)
+
+    assert exc_info.value.error_code is ErrorCode.INVALID_CONFIG
+    assert "expected KEY=VALUE" in exc_info.value.message
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     [

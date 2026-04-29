@@ -71,7 +71,7 @@
 
 ### B) Configuration [P0][MVP]
 - [x] B01 [P0][MVP] Externaliser les options clés via `CODEX_CMD`, `CODEX_MODEL`, `RUN_TIMEOUT_SECONDS`, `STATE_REFRESH_HZ`, `MAX_LOG_LINES`.
-- [ ] B02 [P2][V2] Ajouter un fichier `codexdeck.conf` optionnel, priorités: CLI > env > défaut.
+- [x] B02 [P2][V2] Ajouter un fichier `codexdeck.conf` optionnel, priorités: CLI > env > défaut.
 - [x] B03 [P1][MVP] Ajouter une commande `--print-config` masquant les valeurs sensibles et affichant les chemins résolus.
 - [x] B04 [P0][MVP] Centraliser la config dans une dataclass `CockpitConfig` validée au démarrage (`todo_path`, `log_path`, `codex_cmd`, `model`, `run_timeout`, `stop_timeout`, `refresh_hz`, `max_log_lines`).
 - [x] B05 [P0][MVP] Refuser une config invalide avec message utilisateur clair avant de démarrer la TUI.
@@ -116,7 +116,7 @@
 ### I) Arrêt propre [P0][MVP]
 - [x] I01 [P0][MVP] Implémenter `terminate` puis `kill` après timeout configurable.
 - [x] I02 [P0][MVP] Garantir la fermeture du lecteur de logs et la libération des ressources.
-- [ ] I03 [P1][V2] Ajouter stop via signal `SIGINT`/`Ctrl+C` avec restore TUI.
+- [x] I03 [P1][V2] Ajouter stop via signal `SIGINT`/`Ctrl+C` avec restore TUI.
 
 ### J) Timeout d’exécution [P0][MVP]
 - [x] J01 [P0][MVP] Timeout global run configurable; si dépassé: stop contrôlé, log `RUN_TIMEOUT`, état final `ERROR`.
@@ -143,7 +143,7 @@
 ### N) Rendu panneaux [P0][MVP]
 - [x] N01 [P0][MVP] Corriger les largeurs avec bordures stables (pas de caractères parasites).
 - [x] N02 [P0][MVP] Afficher titres, séparateur, et status bar au format stable.
-- [ ] N03 [P1][MVP] Ajouter compteur de lignes visibles + mode défilement.
+- [x] N03 [P1][MVP] Ajouter compteur de lignes visibles + mode défilement.
 - [x] N04 [P0][MVP] Ajouter mode rendu ASCII fallback (`+---+`) si le terminal ne supporte pas correctement les bordures Unicode.
 - [x] N05 [P1][MVP] Tester rendu 80x24, 100x30, 120x40 et fenêtre redimensionnée, sans chevauchement ni ligne plus longue que la largeur.
 - [ ] N06 [P1][MVP] Tronquer avec ellipsis stable en largeur terminale réelle, y compris caractères larges/accents.
@@ -223,7 +223,7 @@
 - [x] X04 [P1][MVP] Documenter ordre de validation release — AC: unitaires, intégration, smoke stub, smoke manuel listés avec commandes.
 - [x] X05 [P1][MVP] Ajouter section "Quickstart Windows" avec commandes PowerShell depuis clone frais jusqu'au smoke test.
 - [x] X06 [P1][MVP] Ajouter section "Dépannage" couvrant `codex` introuvable, permissions logs, terminal trop petit, commande invalide.
-- [ ] X07 [P2][V2] Ajouter schéma d'architecture (inputs/outputs/state machine).
+- [x] X07 [P2][V2] Ajouter schéma d'architecture (inputs/outputs/state machine).
 
 ### Y) Conformité locale / qualité de repo [P1][MVP]
 - [x] Y01 [P1][MVP] Vérifier ligne fine encodage et chemins `logs/agent.log`.

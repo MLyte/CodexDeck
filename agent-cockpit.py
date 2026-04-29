@@ -22,7 +22,7 @@ from typing import Callable, Optional, Protocol
 
 from codexdeck_core import CockpitConfig, ConfigError, TodoTask, parse_todo_file
 from codexdeck_runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessNotRunning, RunnerState
-from codexdeck_ui import RenderStatus, render_frame, truncate
+from codexdeck_ui import RenderStatus, clamp_task_offset, render_frame, truncate
 
 
 class KeyReader:
@@ -50,6 +50,14 @@ class KeyReader:
             if not self._msvcrt.kbhit():
                 return None
             key = self._msvcrt.getch()
+            if key in {b"\x00", b"\xe0"}:
+                code = self._msvcrt.getch()
+                return {
+                    b"H": "UP",
+                    b"P": "DOWN",
+                    b"I": "PGUP",
+                    b"Q": "PGDN",
+                }.get(code)
             try:
                 return key.decode("utf-8")
             except UnicodeDecodeError:
@@ -63,7 +71,13 @@ class KeyReader:
             ch = os.read(self._fd, 3)
             if not ch:
                 return None
-            return ch.decode(errors="ignore")
+            decoded = ch.decode(errors="ignore")
+            return {
+                "\x1b[A": "UP",
+                "\x1b[B": "DOWN",
+                "\x1b[5": "PGUP",
+                "\x1b[6": "PGDN",
+            }.get(decoded, decoded)
 
     def close(self) -> None:
         if not self._is_windows:
@@ -135,6 +149,7 @@ class Cockpit:
         self.last_run = "never"
         self.model = config.model
         self.show_help = False
+        self.task_offset = 0
         self._key_reader_factory = key_reader_factory
         self._terminal_size = terminal_size or self._default_terminal_size
         self._sleeper = sleeper
@@ -163,6 +178,7 @@ class Cockpit:
         self._todo_mtime = stat.st_mtime
         try:
             self.tasks = parse_todo_file(self.todo_path)
+            self.task_offset = clamp_task_offset(len(self.tasks), self._visible_task_count(), self.task_offset)
             if force:
                 self.runner.log_buffer.append("> Reloaded AI_TODO.md")
         except ConfigError as exc:
@@ -200,7 +216,18 @@ class Cockpit:
             height=height,
             ascii_borders=os.getenv("CODEX_ASCII_BORDERS") == "1",
             show_help=self.show_help,
+            task_offset=self.task_offset,
         )
+
+    def _visible_task_count(self) -> int:
+        _width, height = self._terminal_size()
+        if height < 20:
+            return 0
+        return max(2, height - 5)
+
+    def _scroll_tasks(self, delta: int) -> None:
+        visible = self._visible_task_count()
+        self.task_offset = clamp_task_offset(len(self.tasks), visible, self.task_offset + delta)
 
     def stop(self) -> None:
         try:
@@ -230,6 +257,14 @@ class Cockpit:
                         self.load_todo_if_changed(force=True)
                     elif k in {"h", "?"}:
                         self.show_help = not self.show_help
+                    elif k in {"j", "down"}:
+                        self._scroll_tasks(1)
+                    elif k in {"k", "up"}:
+                        self._scroll_tasks(-1)
+                    elif k == "pgdn":
+                        self._scroll_tasks(self._visible_task_count())
+                    elif k == "pgup":
+                        self._scroll_tasks(-self._visible_task_count())
                     else:
                         self.runner.log_buffer.append(f"> Ignored key: {repr(key)}")
                 width, height = self._terminal_size()

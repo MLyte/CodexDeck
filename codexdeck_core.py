@@ -68,9 +68,13 @@ class CockpitConfig:
         cls,
         env: Mapping[str, str] | None = None,
         base_dir: Path | str | None = None,
+        config_path: Path | str | None = None,
     ) -> "CockpitConfig":
-        source = os.environ if env is None else env
         root = Path.cwd() if base_dir is None else Path(base_dir)
+        env_values = os.environ if env is None else env
+        resolved_config_path = config_path or env_values.get("CODEX_CONFIG_PATH")
+        file_values = _read_config_file(_resolve_config_path(resolved_config_path, root))
+        source = {**file_values, **env_values}
         todo_path = _resolve_path(
             source.get("CODEX_TODO_PATH") or source.get("TODO_PATH") or "AI_TODO.md",
             root,
@@ -229,6 +233,40 @@ def _resolve_path(value: str, base_dir: Path) -> Path:
     if path.is_absolute():
         return path
     return base_dir / path
+
+
+def _resolve_config_path(config_path: Path | str | None, base_dir: Path) -> Path:
+    if config_path is None:
+        return base_dir / "codexdeck.conf"
+    return _resolve_path(str(config_path), base_dir)
+
+
+def _read_config_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise ConfigError(ErrorCode.INVALID_CONFIG, f"Could not read config file: {path}", exc) from exc
+    for line_number, raw in enumerate(lines, 1):
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            raise ConfigError(
+                ErrorCode.INVALID_CONFIG,
+                f"Invalid config line {line_number}: expected KEY=VALUE",
+            )
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ConfigError(
+                ErrorCode.INVALID_CONFIG,
+                f"Invalid config line {line_number}: key must not be empty",
+            )
+        values[key] = value.strip()
+    return values
 
 
 def _float_env(source: Mapping[str, str], key: str, default: float) -> float:

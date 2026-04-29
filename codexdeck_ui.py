@@ -75,6 +75,21 @@ def _pad_line(text: str, width: int) -> str:
     return truncate(text, width).ljust(width)
 
 
+def clamp_task_offset(task_count: int, visible_count: int, offset: int) -> int:
+    if task_count <= 0 or visible_count <= 0:
+        return 0
+    return min(max(0, offset), max(0, task_count - visible_count))
+
+
+def task_range_label(task_count: int, visible_count: int, offset: int) -> str:
+    if task_count <= 0:
+        return "AI_TODO.md 0/0"
+    offset = clamp_task_offset(task_count, visible_count, offset)
+    first = offset + 1
+    last = min(task_count, offset + max(visible_count, 0))
+    return f"AI_TODO.md {first}-{last}/{task_count}"
+
+
 def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: bool) -> str:
     width = max(1, width)
     height = max(1, height)
@@ -108,6 +123,7 @@ def render_frame(
     height: int,
     ascii_borders: bool = False,
     show_help: bool = False,
+    task_offset: int = 0,
 ) -> str:
     if width < 80 or height < 20:
         return _compact_frame(status=status, width=width, height=height, show_help=show_help)
@@ -127,9 +143,12 @@ def render_frame(
         + borders["h"] * right_width
         + borders["tr"]
     )
+    task_list = list(tasks)
+    task_offset = clamp_task_offset(len(task_list), body_h, task_offset)
+
     rendered.append(
         borders["v"]
-        + truncate("AI_TODO.md", left_width).center(left_width)
+        + truncate(task_range_label(len(task_list), body_h, task_offset), left_width).center(left_width)
         + borders["v"]
         + truncate(
             "Help: h/? | Run: r | Stop: s | Reload: l | Quit: q" if show_help else "Codex Output",
@@ -138,7 +157,8 @@ def render_frame(
         + borders["v"]
     )
 
-    task_texts = [truncate(("[x] " if task.done else "[ ] ") + task.text, left_width - 2) for task in tasks]
+    visible_tasks = task_list[task_offset : task_offset + body_h]
+    task_texts = [truncate(("[x] " if task.done else "[ ] ") + task.text, left_width - 2) for task in visible_tasks]
     log_texts = [truncate(line, right_width - 2) for line in list(logs)[-body_h:]]
     while len(task_texts) < body_h:
         task_texts.append("")

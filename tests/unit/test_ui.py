@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from codexdeck_ui import RenderStatus, format_duration, render_frame, truncate
+from codexdeck_ui import RenderStatus, clamp_task_offset, format_duration, render_frame, task_range_label, truncate
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,13 @@ def test_format_duration_is_compact() -> None:
     assert format_duration(7.9) == "7s"
     assert format_duration(61) == "1m01s"
     assert format_duration(3661) == "1h01m"
+
+
+def test_task_offset_helpers_clamp_and_label_visible_range() -> None:
+    assert clamp_task_offset(10, 4, -5) == 0
+    assert clamp_task_offset(10, 4, 99) == 6
+    assert task_range_label(10, 4, 3) == "AI_TODO.md 4-7/10"
+    assert task_range_label(0, 4, 3) == "AI_TODO.md 0/0"
 
 
 @pytest.mark.parametrize(("width", "height"), [(60, 12), (80, 24), (100, 30), (120, 40)])
@@ -62,6 +69,21 @@ def test_render_supports_ascii_borders() -> None:
 
     assert frame.splitlines()[0].startswith("+")
     assert "\u250c" not in frame
+
+
+def test_render_task_offset_shows_scrolled_slice() -> None:
+    frame = render_frame(
+        tasks=[Task(f"task {index}") for index in range(25)],
+        logs=[],
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
+        width=80,
+        height=20,
+        task_offset=3,
+    )
+
+    assert "AI_TODO.md 4-18/25" in frame
+    assert "task 0" not in frame
+    assert "task 3" in frame
 
 
 def test_render_uses_compact_mode_for_small_terminal() -> None:

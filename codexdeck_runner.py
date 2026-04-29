@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import shlex
 import subprocess
 import threading
@@ -48,6 +49,9 @@ class ProcessHandle(Protocol):
         ...
 
     def kill(self) -> None:
+        ...
+
+    def send_signal(self, sig: int) -> None:
         ...
 
     def wait(self, timeout: Optional[float] = None) -> int:
@@ -209,12 +213,17 @@ class CodexProcessRunner:
             self._run_history.clear()
             try:
                 args = build_command(self.command, todo_path)
+                popen_kwargs = {
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.STDOUT,
+                    "text": True,
+                    "bufsize": 1,
+                }
+                if os.name == "nt" and hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                    popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
                 process = self._popen_factory(
                     args,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
+                    **popen_kwargs,
                 )
             except Exception as exc:
                 self._record_error_locked()
@@ -244,24 +253,60 @@ class CodexProcessRunner:
             assert process is not None
             self._state = RunnerState.STOPPING
             self._record_event_locked("stopping")
-            process.terminate()
+            interrupted = self._interrupt_process_locked(process)
+            terminated = False
+            if not interrupted:
+                self._record_event_locked("interrupt unavailable; terminating process", level="WARN")
+                process.terminate()
+                terminated = True
 
         killed = False
         try:
             returncode = process.wait(timeout=self.stop_timeout)
         except subprocess.TimeoutExpired:
-            killed = True
             with self._lock:
-                self._record_event_locked(f"stop timeout after {self.stop_timeout:.3f}s; killing process", level="WARN")
-            process.kill()
-            returncode = process.wait(timeout=None)
+                if interrupted:
+                    self._record_event_locked(
+                        f"interrupt timeout after {self.stop_timeout:.3f}s; terminating process",
+                        level="WARN",
+                    )
+                else:
+                    self._record_event_locked(
+                        f"terminate timeout after {self.stop_timeout:.3f}s; killing process",
+                        level="WARN",
+                    )
+            terminated = True
+            if interrupted:
+                process.terminate()
+                try:
+                    returncode = process.wait(timeout=self.stop_timeout)
+                except subprocess.TimeoutExpired:
+                    killed = True
+                    with self._lock:
+                        self._record_event_locked(
+                            f"terminate timeout after {self.stop_timeout:.3f}s; killing process",
+                            level="WARN",
+                        )
+                    process.kill()
+                    returncode = process.wait(timeout=None)
+            else:
+                killed = True
+                process.kill()
+                returncode = process.wait(timeout=None)
 
         with self._lock:
             self._returncode = returncode
             self._join_reader_locked()
             self._process = None
             self._state = RunnerState.IDLE
-            suffix = " after kill" if killed else ""
+            if killed:
+                suffix = " after kill"
+            elif terminated:
+                suffix = " after terminate"
+            elif interrupted:
+                suffix = " after interrupt"
+            else:
+                suffix = ""
             self._finished_at = self._clock()
             self._record_event_locked(f"stopped rc={returncode}{suffix}")
             return self.status()
@@ -403,3 +448,20 @@ class CodexProcessRunner:
     def _record_event_locked(self, event: str, *, level: str = "INFO") -> None:
         self._run_history.append(event)
         self._emit(f"[{level}] run {self._run_id} {event}")
+
+    def _interrupt_process_locked(self, process: ProcessHandle) -> bool:
+        send_signal = getattr(process, "send_signal", None)
+        if send_signal is None:
+            return False
+        candidates: list[int] = []
+        if os.name == "nt" and hasattr(signal, "CTRL_BREAK_EVENT"):
+            candidates.append(signal.CTRL_BREAK_EVENT)
+        candidates.append(signal.SIGINT)
+        for signum in candidates:
+            try:
+                send_signal(signum)
+            except (OSError, ValueError):
+                continue
+            self._record_event_locked(f"sent interrupt signal {signum}")
+            return True
+        return False

@@ -88,6 +88,29 @@ def make_config(tmp_path: Path) -> CockpitConfig:
     )
 
 
+def test_loop_scrolls_todo_panel_with_navigation_keys(tmp_path: Path) -> None:
+    module = load_cockpit_module()
+    config = make_config(tmp_path)
+    config.todo_path.write_text("\n".join(f"- [ ] task {index}" for index in range(25)), encoding="utf-8")
+    runner = FakeRunner()
+    key_reader = FakeKeyReader(["j", "j", "k", "PGDN", "q"])
+    frames: list[str] = []
+    cockpit = module.Cockpit(
+        config,
+        key_reader_factory=lambda: key_reader,
+        terminal_size=lambda: (80, 20),
+        sleeper=lambda _delay: None,
+        screen_writer=frames.append,
+        runner=runner,
+    )
+
+    cockpit.loop()
+
+    assert cockpit.task_offset == 10
+    assert any("AI_TODO.md 11-25/25" in frame for frame in frames)
+    assert key_reader.closed is True
+
+
 def test_loop_uses_fake_key_reader_without_blocking(tmp_path: Path) -> None:
     module = load_cockpit_module()
     runner = FakeRunner()
