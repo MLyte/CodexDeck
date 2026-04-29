@@ -1,4 +1,4 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "--basetemp=.pytest-tmp/default"
+addopts = "--basetemp=.pytest-tmp"

@@ -11,6 +11,7 @@ from codexdeck_ui import RenderStatus, clamp_task_offset, format_duration, rende
 class Task:
     text: str
     done: bool = False
+    id: str = "task-id"
 
 
 def test_truncate_uses_stable_width() -> None:
@@ -71,6 +72,50 @@ def test_render_supports_ascii_borders() -> None:
     assert "\u250c" not in frame
 
 
+def test_render_status_message_is_visible() -> None:
+    frame = render_frame(
+        tasks=[],
+        logs=[],
+        status=RenderStatus(
+            state="IDLE",
+            model="normal",
+            last_run="12:00",
+            errors=0,
+            message="Last run completed successfully.",
+        ),
+        width=100,
+        height=20,
+    )
+
+    assert "Last run completed successfully." in frame
+
+
+def test_render_empty_task_panel_hint_when_no_tasks() -> None:
+    frame = render_frame(
+        tasks=[],
+        logs=[],
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
+        width=100,
+        height=20,
+        task_panel_hint=["No AI_TODO.md", "n create a starter file"],
+    )
+
+    assert "No AI_TODO.md" in frame
+    assert "n create a starter file" in frame
+
+
+def test_render_prioritizes_todo_column_width() -> None:
+    frame = render_frame(
+        tasks=[Task("Map the user journey before starting Codex")],
+        logs=["log"],
+        status=RenderStatus(state="IDLE", model="normal", last_run="never", errors=0),
+        width=100,
+        height=20,
+    )
+
+    assert "Map the user journey before starting Codex" in frame
+
+
 def test_render_task_offset_shows_scrolled_slice() -> None:
     frame = render_frame(
         tasks=[Task(f"task {index}") for index in range(25)],
@@ -84,6 +129,20 @@ def test_render_task_offset_shows_scrolled_slice() -> None:
     assert "AI_TODO.md 4-18/25" in frame
     assert "task 0" not in frame
     assert "task 3" in frame
+
+
+def test_render_marks_active_task() -> None:
+    frame = render_frame(
+        tasks=[Task("first task", id="first"), Task("second task", id="second")],
+        logs=[],
+        status=RenderStatus(state="RUNNING", model="normal", last_run="12:00", errors=0),
+        width=80,
+        height=20,
+        active_task_id="second",
+    )
+
+    assert ">[ ] second task" in frame
+    assert " [ ] first task" in frame
 
 
 def test_render_uses_compact_mode_for_small_terminal() -> None:

@@ -7,6 +7,7 @@ from typing import Iterable, Protocol
 
 
 class RenderTask(Protocol):
+    id: str
     text: str
     done: bool
 
@@ -19,6 +20,7 @@ class RenderStatus:
     errors: int
     uptime_seconds: float | None = None
     duration_seconds: float | None = None
+    message: str = ""
 
 
 UNICODE_BORDERS = {
@@ -97,15 +99,17 @@ def _compact_frame(*, status: RenderStatus, width: int, height: int, show_help: 
         "CodexDeck compact mode",
         f"Status: {status.state} | Model: {status.model} | Up: {format_duration(status.uptime_seconds)} | Errors: {status.errors}",
         f"Last run: {status.last_run} | Dur: {format_duration(status.duration_seconds)}",
-        "Commands: r run | s stop | l reload | h/? help | q quit",
+        "Commands: r run | s stop | l reload | n new TODO | h/? help | q quit",
     ]
+    if status.message:
+        lines.insert(2, status.message)
     if show_help:
         lines.extend(
             [
                 "",
                 "Help",
                 "r start Codex, s stop current run, l reload AI_TODO.md",
-                "h/? toggle this help, q quit",
+                "n create AI_TODO.md skeleton, h/? toggle help, q quit",
             ]
         )
     lines = lines[:height]
@@ -124,6 +128,8 @@ def render_frame(
     ascii_borders: bool = False,
     show_help: bool = False,
     task_offset: int = 0,
+    active_task_id: str | None = None,
+    task_panel_hint: Iterable[str] = (),
 ) -> str:
     if width < 80 or height < 20:
         return _compact_frame(status=status, width=width, height=height, show_help=show_help)
@@ -131,7 +137,7 @@ def render_frame(
     width = max(40, width)
     height = max(8, height)
     borders = ASCII_BORDERS if ascii_borders else UNICODE_BORDERS
-    left_width = max(18, min(width // 3, width - 24))
+    left_width = max(24, min(round(width * 0.60), width - 32))
     right_width = width - left_width - 3
     body_h = max(2, height - 5)
 
@@ -151,14 +157,20 @@ def render_frame(
         + truncate(task_range_label(len(task_list), body_h, task_offset), left_width).center(left_width)
         + borders["v"]
         + truncate(
-            "Help: h/? | Run: r | Stop: s | Reload: l | Quit: q" if show_help else "Codex Output",
+            "Help: h/? | Run: r | Stop: s | Reload: l | New: n | Quit: q" if show_help else "Codex Output",
             right_width,
         ).center(right_width)
         + borders["v"]
     )
 
     visible_tasks = task_list[task_offset : task_offset + body_h]
-    task_texts = [truncate(("[x] " if task.done else "[ ] ") + task.text, left_width - 2) for task in visible_tasks]
+    task_texts = []
+    for task in visible_tasks:
+        marker = ">" if active_task_id is not None and getattr(task, "id", None) == active_task_id else " "
+        checkbox = "[x]" if task.done else "[ ]"
+        task_texts.append(truncate(f"{marker}{checkbox} {task.text}", left_width - 2))
+    if not task_texts:
+        task_texts = [truncate(line, left_width - 2) for line in task_panel_hint]
     log_texts = [truncate(line, right_width - 2) for line in list(logs)[-body_h:]]
     while len(task_texts) < body_h:
         task_texts.append("")
@@ -181,11 +193,18 @@ def render_frame(
         + borders["h"] * right_width
         + borders["rm"]
     )
-    status_text = (
-        f"Status: {status.state:<8} | Model: {status.model:<7} | "
-        f"Last run: {status.last_run:<5} | Up: {format_duration(status.uptime_seconds):<6} | "
-        f"Dur: {format_duration(status.duration_seconds):<6} | Errors: {status.errors:<3}"
-    )
+    if status.message:
+        status_text = (
+            f"Status: {status.state:<8} | {status.message} | "
+            f"Last run: {status.last_run:<5} | Dur: {format_duration(status.duration_seconds):<6} | "
+            f"Errors: {status.errors:<3}"
+        )
+    else:
+        status_text = (
+            f"Status: {status.state:<8} | Model: {status.model:<7} | "
+            f"Last run: {status.last_run:<5} | Up: {format_duration(status.uptime_seconds):<6} | "
+            f"Dur: {format_duration(status.duration_seconds):<6} | Errors: {status.errors:<3}"
+        )
     rendered.append(
         borders["v"]
         + truncate(status_text, width - 2).ljust(width - 2)

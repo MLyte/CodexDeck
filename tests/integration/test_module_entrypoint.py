@@ -15,6 +15,8 @@ def test_python_m_entrypoint_prints_config(codexdeck_workspace) -> None:
         {
             "CODEX_TODO_PATH": str(codexdeck_workspace.todo_path),
             "CODEX_LOG_PATH": str(codexdeck_workspace.log_path),
+            "CODEX_CMD": "codex {todo}",
+            "CODEX_MODEL": "normal",
         }
     )
 

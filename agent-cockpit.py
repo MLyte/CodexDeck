@@ -1,32 +1,43 @@
 #!/usr/bin/env python3
 """CodexDeck (TUI)
 
-Pilotage terminal simple d'un process Codex basé sur AI_TODO.md.
+Small terminal cockpit for driving one Codex process from AI_TODO.md.
 MVP:
- - Lecture/parsing de la TODO
--  - Liste des tâches dans le volet gauche
-- Lancement manuel du process (touche `r`)
-- Logs live dans le volet droit
-- Barre d'état (IDLE/RUNNING/ERROR)
-Non bloquant: UI refresh + lecture clavier async + logs en thread séparé.
+- read and parse the TODO file
+- show the task list in the left pane
+- start the process manually with `r`
+- show live logs in the right pane
+- show a status bar (IDLE/RUNNING/ERROR)
+Non-blocking: UI refresh, async keyboard polling, and threaded log reading.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Callable, Optional, Protocol
+from typing import Callable, Optional, Protocol, TextIO
 
 from codexdeck_core import CockpitConfig, ConfigError, TodoTask, parse_todo_file
-from codexdeck_runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessNotRunning, RunnerState
+from codexdeck_runner import CodexProcessRunner, ProcessAlreadyRunning, ProcessNotRunning, RunStatus, RunnerState
 from codexdeck_ui import RenderStatus, clamp_task_offset, render_frame, truncate
 
 
+TODO_SKELETON = """# AI_TODO
+
+## First pass
+
+Replace this example with your first real task:
+
+    - [ ] Describe the first concrete action for Codex.
+"""
+
+
 class KeyReader:
-    """Clavier non bloquant cross-plateforme."""
+    """Cross-platform non-blocking keyboard reader."""
 
     def __init__(self) -> None:
         self._is_windows = os.name == "nt"
@@ -43,7 +54,7 @@ class KeyReader:
             self._termios = termios
             self._fd = sys.stdin.fileno()
             self._orig = self._termios.tcgetattr(self._fd)
-            self._tty.setraw(self._fd)
+            self._tty.setcbreak(self._fd)
 
     def get_key(self) -> Optional[str]:
         if self._is_windows:
@@ -93,29 +104,41 @@ class KeyReaderLike(Protocol):
 
 
 class DefaultScreenWriter:
-    def __init__(self) -> None:
-        self._previous_lines = 0
+    def __init__(
+        self,
+        *,
+        terminal_size: Callable[[], tuple[int, int]] | None = None,
+        stream: TextIO | None = None,
+        is_windows: bool | None = None,
+    ) -> None:
         self._cleared_once = False
+        self._last_size: tuple[int, int] | None = None
+        self._terminal_size = terminal_size or self._default_terminal_size
+        self._stream = stream or sys.stdout
+        self._is_windows = os.name == "nt" if is_windows is None else is_windows
 
     def __call__(self, content: str) -> None:
-        if os.name == "nt":
+        current_size = self._terminal_size()
+        size_changed = self._last_size is not None and current_size != self._last_size
+
+        if self._is_windows:
             if not self._cleared_once:
                 os.system("cls")
                 self._cleared_once = True
-            elif not self._move_windows_cursor_home():
+            elif size_changed or not self._move_windows_cursor_home():
                 os.system("cls")
         else:
-            print("\033[H" if self._cleared_once else "\033[2J\033[H", end="")
+            self._stream.write("\033[2J\033[H" if not self._cleared_once else "\033[H\033[J")
             self._cleared_once = True
 
-        line_count = content.count("\n") + (0 if content.endswith("\n") else 1)
-        extra_lines = max(0, self._previous_lines - line_count)
-        if extra_lines:
-            columns = shutil.get_terminal_size(fallback=(100, 24)).columns
-            blank_lines = "\n".join(" " * columns for _ in range(extra_lines))
-            content = content + ("\n" if not content.endswith("\n") else "") + blank_lines
-        print(content, end="", flush=True)
-        self._previous_lines = max(self._previous_lines, line_count)
+        self._stream.write(content)
+        self._stream.flush()
+        self._last_size = current_size
+
+    @staticmethod
+    def _default_terminal_size() -> tuple[int, int]:
+        size = shutil.get_terminal_size(fallback=(100, 24))
+        return size.columns, size.lines
 
     @staticmethod
     def _move_windows_cursor_home() -> bool:
@@ -150,6 +173,10 @@ class Cockpit:
         self.model = config.model
         self.show_help = False
         self.task_offset = 0
+        self.active_task_id: str | None = None
+        self.active_task_label = ""
+        self.last_task_label = ""
+        self.agent_label = self._agent_label(config.codex_cmd)
         self._key_reader_factory = key_reader_factory
         self._terminal_size = terminal_size or self._default_terminal_size
         self._sleeper = sleeper
@@ -172,6 +199,7 @@ class Cockpit:
             stat = self.todo_path.stat()
         except FileNotFoundError:
             self.tasks = []
+            self._todo_mtime = None
             return
         if not force and self._todo_mtime == stat.st_mtime:
             return
@@ -187,10 +215,21 @@ class Cockpit:
 
     def _start_codex(self) -> None:
         try:
+            task = self._next_open_task()
+            if not self.todo_path.exists():
+                self.runner.log_buffer.append("> AI_TODO.md not found. Press n to create a starter file.")
+                return
+            if task is None:
+                self.runner.log_buffer.append("> No open task. Add a '- [ ] ...' line, then press l.")
+                return
+            self.active_task_id = task.id if task is not None else None
+            self.active_task_label = self._task_label(task)
             status = self.runner.start(self.todo_path)
             self.last_run = time.strftime("%H:%M:%S")
-            self.runner.log_buffer.append(f"> Running Codex run_id={status.run_id}")
+            self.runner.log_buffer.append(f"> Target task: {self.active_task_label}")
+            self.runner.log_buffer.append(f"> Run started. {self.agent_label} is processing AI_TODO.md.")
         except ProcessAlreadyRunning:
+            self.runner.log_buffer.append("> A run is already active.")
             return
         except Exception as exc:
             self.runner.log_buffer.append(f"[ERROR] cannot start Codex: {exc}")
@@ -203,7 +242,7 @@ class Cockpit:
         runner_status = self.runner.status()
         return render_frame(
             tasks=self.tasks,
-            logs=self.runner.logs(),
+            logs=self._display_logs(self.runner.logs()),
             status=RenderStatus(
                 state=runner_status.state.value,
                 model=self.model,
@@ -211,23 +250,132 @@ class Cockpit:
                 errors=runner_status.errors,
                 uptime_seconds=getattr(runner_status, "uptime_seconds", None),
                 duration_seconds=getattr(runner_status, "duration_seconds", None),
+                message=self._activity_message(runner_status),
             ),
             width=width,
             height=height,
             ascii_borders=os.getenv("CODEX_ASCII_BORDERS") == "1",
             show_help=self.show_help,
             task_offset=self.task_offset,
+            active_task_id=self.active_task_id,
+            task_panel_hint=self._task_panel_hint(),
         )
 
-    def _visible_task_count(self) -> int:
-        _width, height = self._terminal_size()
+    def _activity_message(self, status: RunStatus) -> str:
+        running = self._status_running(status)
+        returncode = getattr(status, "returncode", None)
+        last_error = getattr(status, "last_error", None)
+        metrics = getattr(status, "metrics", None)
+        runs_total = getattr(metrics, "runs_total", 0)
+
+        if running:
+            return f"[{self._activity_spinner()}] {self.agent_label} is running on {self.active_task_label}."
+        if not self.todo_path.exists():
+            return "AI_TODO.md not found. Press n to create a starter file."
+        if self._next_open_task() is None:
+            if self.tasks:
+                return "All tasks are checked. Add an open task, then press l."
+            return "AI_TODO.md has no tasks. Add '- [ ] ...', then press l."
+        if status.state == RunnerState.ERROR:
+            if returncode is not None:
+                return f"Error code {returncode} on {self.last_task_label or self.active_task_label}."
+            if last_error:
+                return f"Error: {last_error}"
+            return "Last run failed."
+        if runs_total == 0:
+            return f"Ready. Press r to start {self.agent_label}."
+        if returncode == 0:
+            return f"OK on {self.last_task_label or self.active_task_label}."
+        if returncode is not None:
+            return f"Last run exited with code {returncode}."
+        return f"Ready. Press r to restart {self.agent_label}."
+
+    @staticmethod
+    def _status_running(status: RunStatus) -> bool:
+        return getattr(status, "running", status.state in {RunnerState.STARTING, RunnerState.RUNNING})
+
+    @staticmethod
+    def _activity_spinner() -> str:
+        frames = ("|", "/", "-", "\\")
+        return frames[int(time.monotonic() * 8) % len(frames)]
+
+    def _display_logs(self, logs: list[str]) -> list[str]:
+        visible: list[str] = []
+        for line in logs:
+            codex_output = re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s+\[[0-9a-f]{32}\]\s+", line) is not None
+            text = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s+", "", line)
+            text = re.sub(r"\[[0-9a-f]{32}\]\s*", "", text)
+            text = re.sub(r"\[(INFO|WARN|ERROR)\]\s+run\s+[0-9a-f]{32}\s+", "", text)
+            text = re.sub(r"started pid=\d+", "Run started.", text)
+            text = text.replace("finished rc=0", "Run completed successfully.")
+            text = re.sub(r"finished rc=(-?\d+)", r"Run exited with code \1.", text)
+            if re.match(r"codex_stub mode=\w+\s+todo=.*", text):
+                text = "Simulation started."
+            if codex_output:
+                text = f"{self.agent_label} output: {text}"
+            visible.append(text)
+        return visible
+
+    @staticmethod
+    def _agent_label(command: str) -> str:
+        return "Stub Codex (simulation)" if "codex_stub.py" in command else "Codex"
+
+    def _next_open_task(self) -> TodoTask | None:
+        return next((task for task in self.tasks if not task.done), None)
+
+    @staticmethod
+    def _task_label(task: TodoTask | None) -> str:
+        if task is None:
+            return "No open task"
+        return f"line {task.line}: {task.text}"
+
+    @staticmethod
+    def _visible_task_count_for_height(height: int) -> int:
         if height < 20:
             return 0
         return max(2, height - 5)
 
+    def _visible_task_count(self) -> int:
+        _width, height = self._terminal_size()
+        return self._visible_task_count_for_height(height)
+
     def _scroll_tasks(self, delta: int) -> None:
         visible = self._visible_task_count()
         self.task_offset = clamp_task_offset(len(self.tasks), visible, self.task_offset + delta)
+
+    def _task_panel_hint(self) -> list[str]:
+        if self.tasks:
+            return []
+        if not self.todo_path.exists():
+            return [
+                "No AI_TODO.md",
+                "",
+                "n create a starter file",
+                "then edit the first task",
+                "",
+                "r will start Codex after that",
+            ]
+        return [
+            "No open task",
+            "",
+            "Add a line:",
+            "- [ ] First action",
+            "",
+            "l reload, r run",
+        ]
+
+    def _create_todo_skeleton(self) -> None:
+        if self.todo_path.exists():
+            self.runner.log_buffer.append("> AI_TODO.md already exists. Add a '- [ ] ...' line, then press l.")
+            return
+        try:
+            self.todo_path.parent.mkdir(parents=True, exist_ok=True)
+            self.todo_path.write_text(TODO_SKELETON, encoding="utf-8")
+        except OSError as exc:
+            self.runner.log_buffer.append(f"[ERROR] cannot create AI_TODO.md: {exc}")
+            return
+        self.load_todo_if_changed()
+        self.runner.log_buffer.append("> Starter AI_TODO.md created. Replace the first task with your goal.")
 
     def stop(self) -> None:
         try:
@@ -238,7 +386,9 @@ class Cockpit:
     def loop(self) -> None:
         key_reader = self._key_reader_factory()
         self.load_todo_if_changed()
-        self.runner.log_buffer.append("> Ready. Press 'r' run, 's' stop, 'l' reload, 'h/?' help, 'q' quit.")
+        self.runner.log_buffer.append("> Ready. Press 'r' run, 's' stop, 'l' reload, 'n' new TODO, 'h/?' help, 'q' quit.")
+        if self.agent_label != "Codex":
+            self.runner.log_buffer.append(f"> Active mode: {self.agent_label}. No real Codex call will run.")
 
         try:
             while True:
@@ -249,12 +399,16 @@ class Cockpit:
                     k = key.lower()
                     if k == "q":
                         break
-                    elif k == "r" and runner_status.state not in {RunnerState.RUNNING, RunnerState.STARTING}:
+                    elif k == "r" and not self._status_running(runner_status):
                         self._start_codex()
-                    elif k == "s" and runner_status.state == RunnerState.RUNNING:
+                    elif k == "s" and self._status_running(runner_status):
                         self.stop()
+                    elif k == "s":
+                        self.runner.log_buffer.append("> No active run to stop.")
                     elif k == "l":
                         self.load_todo_if_changed(force=True)
+                    elif k == "n":
+                        self._create_todo_skeleton()
                     elif k in {"h", "?"}:
                         self.show_help = not self.show_help
                     elif k in {"j", "down"}:
@@ -268,7 +422,14 @@ class Cockpit:
                     else:
                         self.runner.log_buffer.append(f"> Ignored key: {repr(key)}")
                 width, height = self._terminal_size()
+                visible_tasks = self._visible_task_count_for_height(height)
+                self.task_offset = clamp_task_offset(len(self.tasks), visible_tasks, self.task_offset)
                 content = self._render(width, height)
+                refreshed_status = self.runner.status()
+                if not self._status_running(refreshed_status) and self.active_task_label:
+                    self.last_task_label = self.active_task_label
+                    self.active_task_id = None
+                    self.active_task_label = ""
                 self._screen_writer(content)
                 self._sleeper(self.refresh_delay)
         finally:
