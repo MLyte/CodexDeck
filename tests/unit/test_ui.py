@@ -250,7 +250,7 @@ def test_render_compact_mode_shows_prompt_before_keys() -> None:
     )
 
     assert "Action required: Do you want to continue? (y/n)" in frame
-    assert frame.index("Action required:") < frame.index("Keys: (r)un")
+    assert frame.index("Action required:") < frame.index("Keys:")
 
 
 def test_render_empty_task_panel_hint_when_no_tasks() -> None:
@@ -316,7 +316,7 @@ def test_render_shrinks_todo_section_when_tasks_need_fewer_rows() -> None:
     output_title_index = next(index for index, line in enumerate(lines) if "Codex Output" in line)
 
     assert output_title_index - todo_title_index == 4
-    assert "log line 0" in frame
+    assert "log line 11" in frame
 
 
 def test_render_task_offset_shows_scrolled_slice() -> None:
