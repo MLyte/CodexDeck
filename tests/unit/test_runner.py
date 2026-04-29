@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -85,6 +87,22 @@ def test_start_success_uses_popen_factory(tmp_path: Path) -> None:
     assert status.pid == 123
     assert seen["args"][0] == ["codex", str(tmp_path / "AI_TODO.md")]
     assert seen["kwargs"]["text"] is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="PTY support is POSIX-only")
+def test_start_uses_pty_stdout_on_posix(tmp_path: Path) -> None:
+    todo = tmp_path / "AI_TODO.md"
+    todo.write_text("- [ ] task\n", encoding="utf-8")
+    runner = CodexProcessRunner(
+        [sys.executable, "-c", "import sys; print(sys.stdout.isatty())"],
+        tmp_path / "logs" / "agent.log",
+    )
+
+    runner.start(todo)
+    status = runner.wait()
+
+    assert status.returncode == 0
+    assert any("True" in line for line in runner.logs())
 
 
 def test_rejects_second_process(tmp_path: Path) -> None:

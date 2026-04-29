@@ -61,6 +61,56 @@ class ProcessHandle(Protocol):
 PopenFactory = Callable[..., ProcessHandle]
 
 
+class _PtyProcessHandle:
+    def __init__(self, process: ProcessHandle, stdout: TextIO) -> None:
+        self._process = process
+        self.stdout = stdout
+
+    @property
+    def pid(self) -> int:
+        return self._process.pid
+
+    def poll(self) -> Optional[int]:
+        return self._process.poll()
+
+    def terminate(self) -> None:
+        self._process.terminate()
+
+    def kill(self) -> None:
+        self._process.kill()
+
+    def send_signal(self, sig: int) -> None:
+        self._process.send_signal(sig)
+
+    def wait(self, timeout: Optional[float] = None) -> int:
+        return self._process.wait(timeout=timeout)
+
+    def close(self) -> None:
+        if not self.stdout.closed:
+            self.stdout.close()
+
+
+def _spawn_with_pty(factory: PopenFactory, args: list[str], kwargs: dict[str, object]) -> ProcessHandle:
+    import pty
+
+    master_fd, slave_fd = pty.openpty()
+    try:
+        process = factory(
+            args,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            **kwargs,
+        )
+    except Exception:
+        os.close(master_fd)
+        os.close(slave_fd)
+        raise
+    os.close(slave_fd)
+    stdout = os.fdopen(master_fd, "r", encoding="utf-8", errors="replace", newline="")
+    return _PtyProcessHandle(process, stdout)
+
+
 @dataclass(frozen=True)
 class RunMetrics:
     runs_total: int
@@ -213,18 +263,22 @@ class CodexProcessRunner:
             self._run_history.clear()
             try:
                 args = build_command(self.command, todo_path)
-                popen_kwargs = {
-                    "stdout": subprocess.PIPE,
-                    "stderr": subprocess.STDOUT,
-                    "text": True,
-                    "bufsize": 1,
-                }
-                if os.name == "nt" and hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
-                    popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-                process = self._popen_factory(
-                    args,
-                    **popen_kwargs,
-                )
+                if os.name == "nt" or self._popen_factory is not subprocess.Popen:
+                    popen_kwargs: dict[str, object] = {
+                        "stdout": subprocess.PIPE,
+                        "stderr": subprocess.STDOUT,
+                        "text": True,
+                        "bufsize": 1,
+                    }
+                    if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+                    process = self._popen_factory(args, **popen_kwargs)
+                else:
+                    popen_kwargs = {
+                        "text": True,
+                        "bufsize": 1,
+                    }
+                    process = _spawn_with_pty(self._popen_factory, args, popen_kwargs)
             except Exception as exc:
                 self._record_error_locked()
                 self.last_error = f"POPEN_FAILED: {exc}"
@@ -404,6 +458,10 @@ class CodexProcessRunner:
                 stdout.close()
             thread.join(timeout=1.0)
         if thread is None or not thread.is_alive():
+            process = self._process
+            close = getattr(process, "close", None) if process is not None else None
+            if callable(close):
+                close()
             self._reader_thread = None
 
     def _read_stdout(self, run_id: str, process: ProcessHandle) -> None:
@@ -414,7 +472,7 @@ class CodexProcessRunner:
             for raw in stdout:
                 line = str(raw).rstrip("\r\n")
                 self._emit(f"[{run_id}] {line}")
-        except ValueError:
+        except (OSError, ValueError):
             return
 
     def _emit(self, message: str) -> None:
