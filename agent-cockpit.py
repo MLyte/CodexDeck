@@ -244,13 +244,15 @@ class Cockpit:
 def main() -> None:
     try:
         config = CockpitConfig.from_env(base_dir=Path.cwd())
+        cockpit = Cockpit(config=config)
+        cockpit.loop()
     except ConfigError as exc:
         print(f"Config error [{exc.error_code.value}]: {exc.message}", file=sys.stderr)
         if exc.cause is not None:
             print(f"Cause: {exc.cause}", file=sys.stderr)
         raise SystemExit(2) from exc
-    cockpit = Cockpit(config=config)
-    cockpit.loop()
+    except KeyboardInterrupt as exc:
+        raise SystemExit(130) from exc
 
 
 if __name__ == "__main__":

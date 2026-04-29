@@ -56,10 +56,13 @@ def print_config() -> None:
 
 
 def main() -> None:
-    if "--print-config" in sys.argv[1:]:
-        print_config()
-        return
-    runpy.run_path(str(Path(__file__).with_name("agent-cockpit.py")), run_name="__main__")
+    try:
+        if "--print-config" in sys.argv[1:]:
+            print_config()
+            return
+        runpy.run_path(str(Path(__file__).with_name("agent-cockpit.py")), run_name="__main__")
+    except KeyboardInterrupt as exc:
+        raise SystemExit(130) from exc
 
 
 if __name__ == "__main__":
