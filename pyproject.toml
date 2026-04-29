@@ -1,4 +1,49 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codexdeck"
+version = "0.1.0"
+description = "A local terminal cockpit for running Codex against an AI_TODO.md plan."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "lyte" },
+]
+keywords = ["codex", "terminal", "tui", "automation", "ai"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9.0,<10.0",
+]
+
+[project.scripts]
+codexdeck = "codexdeck.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/MLyte/CodexDeck"
+Repository = "https://github.com/MLyte/CodexDeck"
+Issues = "https://github.com/MLyte/CodexDeck/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["src", "."]
 addopts = "--basetemp=.pytest-tmp"

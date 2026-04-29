@@ -1,3 +1,30 @@
+Metadata-Version: 2.4
+Name: codexdeck
+Version: 0.1.0
+Summary: A local terminal cockpit for running Codex against an AI_TODO.md plan.
+Author: lyte
+License-Expression: MIT
+Project-URL: Homepage, https://github.com/MLyte/CodexDeck
+Project-URL: Repository, https://github.com/MLyte/CodexDeck
+Project-URL: Issues, https://github.com/MLyte/CodexDeck/issues
+Keywords: codex,terminal,tui,automation,ai
+Classifier: Development Status :: 3 - Alpha
+Classifier: Environment :: Console
+Classifier: Intended Audience :: Developers
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Software Development
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Provides-Extra: dev
+Requires-Dist: pytest<10.0,>=9.0; extra == "dev"
+Dynamic: license-file
+
 # CodexDeck
 
 [![tests](https://github.com/MLyte/CodexDeck/actions/workflows/tests.yml/badge.svg)](https://github.com/MLyte/CodexDeck/actions/workflows/tests.yml)

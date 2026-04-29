@@ -1,0 +1,2 @@
+[console_scripts]
+codexdeck = codexdeck.cli:main
