@@ -30,6 +30,84 @@ pipx install git+https://github.com/MLyte/CodexDeck.git
 codexdeck --version
 ```
 
+### Quick installation guide
+
+From release source (latest public):
+
+```bash
+pipx install git+https://github.com/MLyte/CodexDeck.git
+codexdeck --version
+```
+
+```powershell
+pipx install git+https://github.com/MLyte/CodexDeck.git
+codexdeck --version
+```
+
+From a local checkout (after edits):
+
+```bash
+git clone https://github.com/MLyte/CodexDeck.git
+cd CodexDeck
+UV_CACHE_DIR=/tmp/uv-cache uv build
+pipx install --force dist/codexdeck-*.whl
+hash -r
+codexdeck --version
+```
+
+```powershell
+git clone https://github.com/MLyte/CodexDeck.git
+Set-Location CodexDeck
+$env:UV_CACHE_DIR = if ($env:TEMP) { Join-Path $env:TEMP "uv-cache" } else { "C:\\Temp\\uv-cache" }
+uv build
+$wheel = Get-ChildItem dist\codexdeck-*.whl | Sort-Object Name | Select-Object -Last 1
+pipx install --force $wheel.FullName
+codexdeck --version
+```
+
+One-shot for iterative development (build + install):
+
+```bash
+(
+  cd "$(git rev-parse --show-toplevel)"
+  UV_CACHE_DIR=${UV_CACHE_DIR:-/tmp/uv-cache} uv build
+  WHEEL_PATH="$(ls dist/codexdeck-*.whl | sort | tail -n 1)"
+  pipx install --force "$WHEEL_PATH"
+  hash -r
+  codexdeck --version
+)
+```
+
+```powershell
+$root = git rev-parse --show-toplevel
+Set-Location $root
+if (-not $env:UV_CACHE_DIR) {
+  $env:UV_CACHE_DIR = if ($env:TEMP) { Join-Path $env:TEMP "uv-cache" } else { "C:\\Temp\\uv-cache" }
+}
+uv build
+$wheel = Get-ChildItem dist\codexdeck-*.whl | Sort-Object Name | Select-Object -Last 1
+if (-not $wheel) { throw "No wheel found in dist\\" }
+pipx install --force $wheel.FullName
+codexdeck --version
+```
+
+How to update to the latest release:
+
+```bash
+git fetch --tags --force
+LATEST_TAG="$(git tag --sort=-v:refname | grep '^v[0-9]' | head -n 1)"
+pipx install --force "git+https://github.com/MLyte/CodexDeck.git@${LATEST_TAG}"
+codexdeck --version
+```
+
+```powershell
+git fetch --tags --force
+$latestTag = (git tag --sort=-v:refname | Where-Object { $_ -match '^v[0-9]' } | Select-Object -First 1)
+if (-not $latestTag) { throw "No v* tag found" }
+pipx install --force "git+https://github.com/MLyte/CodexDeck.git@${latestTag}"
+codexdeck --version
+```
+
 Development install from a clone:
 
 ```bash
@@ -121,6 +199,7 @@ See [docs/configuration.md](docs/configuration.md) for the full reference.
 - [Usage guide](docs/usage.md)
 - [Configuration reference](docs/configuration.md)
 - [Development guide](docs/development.md)
+- [Build + pipx release guide](docs/pipx-release.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
 
